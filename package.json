@@ -1,0 +1,30 @@
+{
+  "name": "workflow-v2",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@monaco-editor/react": "^4.6.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@xyflow/react": "^12.0.0",
+    "lucide-react": "^0.400.0",
+    "next": "^15.0.0",
+    "openai": "^6.32.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "ts-morph": "^24.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.5.0"
+  }
+}

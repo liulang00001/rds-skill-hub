@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# next.js build
+.next/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# env files
+.env
+.env.local
+.env*.local
+
+# logs
+logs/
+
+# saved skills (user-generated runtime data, root level only)
+/skills/
+
+# IDE & editor
+.claude/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# scripts data (user-generated, root level only)
+/scripts/

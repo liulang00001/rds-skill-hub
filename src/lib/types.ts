@@ -72,6 +72,18 @@ export interface DataTable {
   fileName: string;
 }
 
+/** 步骤执行报告 */
+export interface StepReport {
+  /** 步骤 ID（来自 WorkflowNode.id） */
+  stepId: string;
+  /** 步骤标签（来自 WorkflowNode.label） */
+  label: string;
+  /** 模块类型 */
+  module: string;
+  /** 该步骤的输出消息列表 */
+  messages: string[];
+}
+
 /** 执行结果 */
 export interface ExecutionResult {
   success: boolean;
@@ -84,6 +96,8 @@ export interface ExecutionResult {
   report: string[];
   /** 系统调试日志（TRACE/DEBUG/INFO） */
   logs: string[];
+  /** 结构化步骤报告 */
+  steps: StepReport[];
 }
 
 /** 分析发现 */

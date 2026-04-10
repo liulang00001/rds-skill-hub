@@ -4,7 +4,7 @@
  * 策略：用 ts-morph 将 TypeScript 编译为 JavaScript，再通过 Function 构造器执行
  * 生产环境可升级为 quickjs-emscripten 沙箱
  */
-import { DataTable, ExecutionResult, Finding } from './types';
+import { DataTable, ExecutionResult, Finding, StepReport } from './types';
 import { Project, ScriptTarget, ModuleKind, SyntaxKind } from 'ts-morph';
 import {
   scanAll, checkValue, checkMultiValues,
@@ -137,9 +137,10 @@ function __wrapTrace(name, fn) {
  */
 export function executeCode(code: string, table: DataTable): ExecutionResult {
   const startTime = Date.now();
-  const report: string[] = [];  // 代码中 console.log 输出 → 分析报告
+  const report: string[] = [];  // 代码中 console.log 输出 → 分析报告（兼容旧代码）
   const logs: string[] = [];    // 系统追踪日志
   const findings: Finding[] = [];
+  const stepsMap = new Map<string, StepReport>();  // 结构化步骤报告
 
   try {
     const data = tableToSignalRows(table);
@@ -167,12 +168,25 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
     const safeConsole = {
       log: (...args: any[]) => {
         const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-        // 系统追踪前缀 → 归入 logs；用户代码输出 → 归入 report
+        // 系统追踪前缀 → 归入 logs
         if (msg.startsWith('[TRACE') || msg.startsWith('[DEBUG') || msg.startsWith('[INFO]')) {
           logs.push(msg);
-        } else {
-          report.push(msg);
+          return;
         }
+        // 尝试解析结构化步骤输出
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed && parsed.__step) {
+            const key = parsed.__step;
+            if (!stepsMap.has(key)) {
+              stepsMap.set(key, { stepId: key, label: parsed.label || key, module: parsed.module || '', messages: [] });
+            }
+            stepsMap.get(key)!.messages.push(parsed.msg);
+            return;
+          }
+        } catch { /* 非 JSON，走兜底 */ }
+        // 兜底：普通文本 → report（兼容旧代码/用户手写代码）
+        report.push(msg);
       },
       warn: (...args: any[]) => {
         const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
@@ -235,6 +249,7 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
       duration,
       report,
       logs,
+      steps: Array.from(stepsMap.values()),
     };
   } catch (error) {
     const duration = Date.now() - startTime;
@@ -249,6 +264,7 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
       duration,
       report,
       logs,
+      steps: Array.from(stepsMap.values()),
     };
   }
 }

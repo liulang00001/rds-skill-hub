@@ -10,6 +10,8 @@ import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
 import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
+import { parseSSEStream } from '@/lib/sse-parser';
+import ThinkingDrawer from '@/components/ThinkingDrawer';
 
 interface SavedSkill {
   name: string;
@@ -155,6 +157,11 @@ export default function Home() {
   const [streamLog, setStreamLog] = useState<Array<{ type: 'progress' | 'token' | 'error'; text: string }>>([]);
   const streamLogRef = useRef<HTMLDivElement>(null);
 
+  // === 思考过程抽屉 ===
+  const [thinkingContent, setThinkingContent] = useState('');
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [thinkingFinished, setThinkingFinished] = useState(false);
+
   const loadSkillList = useCallback(async () => {
     try {
       const res = await fetch('/api/skills');
@@ -165,30 +172,73 @@ export default function Home() {
 
   useEffect(() => { loadSkillList(); }, [loadSkillList]);
 
-  // === 逻辑校验 ===
+  // === 开启思考抽屉的辅助函数 ===
+  const startThinking = useCallback(() => {
+    setThinkingContent('');
+    setThinkingFinished(false);
+    setThinkingOpen(true);
+  }, []);
+
+  const finishThinking = useCallback(() => {
+    setThinkingFinished(true);
+  }, []);
+
+  // === 逻辑校验（SSE 流式） ===
   const handleValidateLogic = useCallback(async () => {
     if (!signalsDef.trim() && !analyzeSteps.trim()) return;
     setValidating(true);
     setValidationResult(null);
     setError(null);
+    startThinking();
+
     try {
       const res = await fetch(apiUrl(API_VALIDATE_BASE, '/api/validate-logic'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps }),
       });
-      const json = await res.json();
-      if (json.success) {
-        setValidationResult(json.result);
-      } else {
-        setError(json.error);
+
+      let result: ValidationResult | null = null;
+      let thinkingDone = false;
+
+      await parseSSEStream(res, {
+        onThinking: (content) => {
+          setThinkingContent(prev => prev + content);
+        },
+        onToken: () => {
+          // 收到第一笔 token 时，结束思考
+          if (!thinkingDone) {
+            thinkingDone = true;
+            finishThinking();
+          }
+        },
+        onProgress: (message) => {
+          // 校验的 progress 可选展示，此处暂忽略
+        },
+        onDone: (msg) => {
+          if (!thinkingDone) { thinkingDone = true; finishThinking(); }
+          if (msg.result) {
+            result = msg.result as unknown as ValidationResult;
+          } else if (msg.error) {
+            setError(msg.error as string);
+          }
+        },
+        onError: (error) => {
+          if (!thinkingDone) { thinkingDone = true; finishThinking(); }
+          setError(error);
+        },
+      });
+
+      if (result) {
+        setValidationResult(result);
       }
     } catch (e) {
+      finishThinking();
       setError(String(e));
     } finally {
       setValidating(false);
     }
-  }, [signalsDef, analyzeSteps]);
+  }, [signalsDef, analyzeSteps, startThinking, finishThinking]);
 
   // === 解析信号清单 ===
   const parseSignals = useCallback(() => {
@@ -318,6 +368,7 @@ export default function Home() {
     setWorkflowDef(null);
     setCode('');
     setActiveTab('flow');
+    startThinking();
 
     const parsedSignals = parseSignals();
 
@@ -328,48 +379,40 @@ export default function Home() {
         body: JSON.stringify({ description: analyzeSteps, signals: parsedSignals }),
       });
 
-      if (!res.body) throw new Error('不支持流式响应');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       let wfDef: WorkflowDefinition | null = null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      let thinkingDone = false;
 
-        buffer += decoder.decode(value, { stream: true });
-        const blocks = buffer.split('\n\n');
-        buffer = blocks.pop() ?? '';
-
-        for (const block of blocks) {
-          const line = block.trim();
-          if (!line.startsWith('data:')) continue;
-          const raw = line.slice(5).trim();
-          try {
-            const msg = JSON.parse(raw);
-            if (msg.type === 'progress') {
-              setStreamLog(prev => [...prev, { type: 'progress', text: msg.message }]);
-            } else if (msg.type === 'token') {
-              setStreamLog(prev => {
-                const last = prev[prev.length - 1];
-                if (last?.type === 'token') {
-                  return [...prev.slice(0, -1), { type: 'token', text: last.text + msg.content }];
-                }
-                return [...prev, { type: 'token', text: msg.content }];
-              });
-            } else if (msg.type === 'error') {
-              throw new Error(msg.error);
-            } else if (msg.type === 'done') {
-              wfDef = msg.workflowDef;
-            }
-          } catch (parseErr) {
-            if (parseErr instanceof SyntaxError) continue;
-            throw parseErr;
+      await parseSSEStream(res, {
+        onThinking: (content) => {
+          setThinkingContent(prev => prev + content);
+        },
+        onProgress: (message) => {
+          setStreamLog(prev => [...prev, { type: 'progress', text: message }]);
+        },
+        onToken: (content) => {
+          // 收到第一笔 token 时，结束思考
+          if (!thinkingDone) {
+            thinkingDone = true;
+            finishThinking();
           }
-        }
-      }
+          setStreamLog(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.type === 'token') {
+              return [...prev.slice(0, -1), { type: 'token', text: last.text + content }];
+            }
+            return [...prev, { type: 'token', text: content }];
+          });
+        },
+        onDone: (msg) => {
+          if (!thinkingDone) { thinkingDone = true; finishThinking(); }
+          wfDef = msg.workflowDef as unknown as WorkflowDefinition;
+        },
+        onError: (error) => {
+          if (!thinkingDone) { thinkingDone = true; finishThinking(); }
+          throw new Error(error);
+        },
+      });
 
       if (!wfDef) throw new Error('未收到工作流定义');
 
@@ -394,12 +437,13 @@ export default function Home() {
         setError(`代码生成失败: ${codeJson.error}`);
       }
     } catch (e) {
+      finishThinking();
       setError(String(e));
       setStreamLog(prev => [...prev, { type: 'error', text: String(e) }]);
     } finally {
       setStatus('idle');
     }
-  }, [analyzeSteps, parseSignals]);
+  }, [analyzeSteps, parseSignals, startThinking, finishThinking]);
 
   // === JSON 编辑 → 应用更改 ===
   const handleJsonChange = useCallback((value: string | undefined) => {
@@ -1257,6 +1301,14 @@ export default function Home() {
           )}
         </div>
       </div>
+
+      {/* 思考过程抽屉 */}
+      <ThinkingDrawer
+        open={thinkingOpen}
+        content={thinkingContent}
+        finished={thinkingFinished}
+        onClose={() => setThinkingOpen(false)}
+      />
     </div>
   );
 }

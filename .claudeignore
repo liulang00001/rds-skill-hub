@@ -1,0 +1,65 @@
+# ===== 依赖 & 构建产物 =====
+node_modules/
+.next/
+out/
+dist/
+build/
+tsconfig.tsbuildinfo
+
+# ===== 包管理 =====
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ===== 运行时数据 =====
+logs/
+skills/
+
+# ===== 压缩 & 二进制 =====
+*.7z
+*.zip
+*.tar.gz
+*.rar
+*.exe
+*.dll
+*.so
+*.dylib
+
+# ===== 环境 & 密钥 =====
+.env
+.env.*
+config.json
+
+# ===== IDE & 编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ===== Git =====
+.git/
+
+# ===== 图片 & 媒体 =====
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.mp4
+*.webm
+*.woff
+*.woff2
+*.ttf
+*.eot
+
+# ===== 文档（非代码） =====
+README.md
+LICENSE
+CHANGELOG.md

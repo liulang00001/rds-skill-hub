@@ -36,3 +36,34 @@ body {
 .react-flow__node {
   font-size: 12px;
 }
+
+/* ThinkingDrawer 段落缩进：每段首行缩进 2 字符 */
+.thinking-content {
+  /* 容器不设 text-indent，由子段落各自缩进 */
+}
+.thinking-content .thinking-paragraph {
+  text-indent: 2em;
+  margin-bottom: 0.5em;
+}
+.thinking-content .thinking-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* ThinkingDrawer 动画 */
+.thinking-dot-animation {
+  animation: thinking-pulse 1.5s ease-in-out infinite;
+  color: var(--accent);
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.thinking-cursor {
+  animation: cursor-blink 0.8s step-end infinite;
+  color: var(--accent);
+  font-weight: bold;
+}
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

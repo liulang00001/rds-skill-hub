@@ -8,10 +8,11 @@ import { workflowToFlowChart } from '@/lib/json-to-flow';
 import ResultPanel from '@/components/ResultPanel';
 import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
-import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown } from 'lucide-react';
+import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
+import DiffModal from '@/components/DiffModal';
 
 interface SavedSkill {
   name: string;
@@ -81,6 +82,7 @@ export default function Home() {
   const [analyzeSteps, setAnalyzeSteps] = useState('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [validating, setValidating] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
 
   // === 实时信号引用检查（不走大模型） ===
   // 1) 从信号清单解析出已定义的信号名集合
@@ -188,6 +190,7 @@ export default function Home() {
     if (!signalsDef.trim() && !analyzeSteps.trim()) return;
     setValidating(true);
     setValidationResult(null);
+    setShowDiff(false);
     setError(null);
     startThinking();
 
@@ -615,7 +618,7 @@ export default function Home() {
   const stepCount = (analyzeSteps.match(/^##\s/gm) || []).length;
 
   // === 可拖拽分割线：左右（信号清单 vs 分析步骤） ===
-  const [leftWidth, setLeftWidth] = useState(50); // 百分比
+  const [leftWidth, setLeftWidth] = useState(30); // 百分比，默认 3:7
   const logicContainerRef = useRef<HTMLDivElement>(null);
 
   const handleHDragStart = useCallback((e: React.MouseEvent) => {
@@ -1118,16 +1121,25 @@ export default function Home() {
                                 <Sparkles size={13} className="text-purple-500" />
                                 优化建议
                               </span>
-                              <button
-                                onClick={() => {
-                                  if (validationResult.optimizedSteps) {
-                                    setAnalyzeSteps(validationResult.optimizedSteps);
-                                  }
-                                }}
-                                className="px-2.5 py-1 text-[11px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition"
-                              >
-                                应用优化
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setShowDiff(true)}
+                                  className="px-2.5 py-1 text-[11px] rounded transition flex items-center gap-1 bg-blue-50 text-blue-600 hover:bg-blue-100"
+                                >
+                                  <Diff size={12} />
+                                  差异对比
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (validationResult.optimizedSteps) {
+                                      setAnalyzeSteps(validationResult.optimizedSteps);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 text-[11px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition"
+                                >
+                                  应用优化
+                                </button>
+                              </div>
                             </div>
                             <pre className="text-[11px] p-3 bg-gray-50 border border-gray-200 rounded max-h-[150px] overflow-auto whitespace-pre-wrap font-mono">
                               {validationResult.optimizedSteps}
@@ -1308,6 +1320,19 @@ export default function Home() {
         content={thinkingContent}
         finished={thinkingFinished}
         onClose={() => setThinkingOpen(false)}
+      />
+
+      {/* 差异对比弹窗 */}
+      <DiffModal
+        open={showDiff}
+        original={analyzeSteps}
+        optimized={validationResult?.optimizedSteps || ''}
+        onClose={() => setShowDiff(false)}
+        onApply={() => {
+          if (validationResult?.optimizedSteps) {
+            setAnalyzeSteps(validationResult.optimizedSteps);
+          }
+        }}
       />
     </div>
   );

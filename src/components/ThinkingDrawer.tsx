@@ -124,7 +124,11 @@ export default function ThinkingDrawer({
           style={{ color: 'var(--fg)', fontFamily: 'system-ui, -apple-system, sans-serif' }}
         >
           {content ? (
-            <div className="whitespace-pre-wrap break-words thinking-content">{content}</div>
+            <div className="break-words thinking-content">
+              {content.split(/\n\n+/).map((paragraph, i) => (
+                <p key={i} className="whitespace-pre-wrap thinking-paragraph">{paragraph}</p>
+              ))}
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full" style={{ color: 'var(--muted)' }}>
               等待思考内容…

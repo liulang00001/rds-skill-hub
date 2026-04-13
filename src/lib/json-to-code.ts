@@ -143,6 +143,11 @@ function varName(stepId: string): string {
   return stepId.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
+/** 生成结构化步骤日志的 console.log 语句（运行时由 executor 解析归类） */
+function stepLog(ind: string, stepId: string, label: string, module: string, msgExpr: string): string {
+  return `${ind}console.log(JSON.stringify({ __step: ${JSON.stringify(stepId)}, label: ${JSON.stringify(label)}, module: ${JSON.stringify(module)}, msg: ${msgExpr} }));`;
+}
+
 /** 从 params 中的 condition/conditions 构建运行时条件代码字符串 */
 function buildConditionCode(p: Record<string, any>): string {
   if (p.condition?.signal) {
@@ -176,12 +181,12 @@ function genDetectTransition(step: WorkflowNode, level: number): string[] {
   const rangeStr = rangeArgs.length > 0 ? `, ${rangeArgs.join(', ')}` : '';
 
   lines.push(`${ind}const ${vn} = detectTransition(data, ${JSON.stringify(p.signal)}, ${JSON.stringify(p.from)}, ${JSON.stringify(p.to)}, ${multiple}${rangeStr});`);
-  lines.push(`${ind}console.log(\`${step.label || '跳变检测'}: 检测到 \${${vn}.length} 个事件\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '跳变检测', 'detectTransition', `\`检测到 \${${vn}.length} 个事件\``));
 
   // 如果有子节点，自动包裹 forEachEvent
   if (step.children && step.children.length > 0) {
     lines.push(`${ind}forEachEvent(data, ${vn}, (row, idx, eventNo) => {`);
-    lines.push(`${ind}  console.log(\`[事件\${eventNo}] 时刻: \${row.time}\`);`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '跳变检测', 'detectTransition', `\`[事件\${eventNo}] 时刻: \${row.time}\``));
     for (const child of step.children) {
       lines.push(...generateStepCode(child, level + 1));
     }
@@ -224,11 +229,11 @@ function genDetectMultiTransition(step: WorkflowNode, level: number): string[] {
   const multiRangeStr = multiRangeArgs.length > 0 ? `, ${multiRangeArgs.join(', ')}` : '';
 
   lines.push(`${ind}const ${vn} = detectMultiTransition(data, ${JSON.stringify(p.transitions)}, ${p.contextConditions ? JSON.stringify(p.contextConditions) : 'undefined'}, ${p.multiple !== false}${multiRangeStr});`);
-  lines.push(`${ind}console.log(\`${step.label || '多信号跳变'}: 检测到 \${${vn}.length} 个事件\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '多信号跳变', 'detectMultiTransition', `\`检测到 \${${vn}.length} 个事件\``));
 
   if (step.children && step.children.length > 0) {
     lines.push(`${ind}forEachEvent(data, ${vn}, (row, idx, eventNo) => {`);
-    lines.push(`${ind}  console.log(\`[事件\${eventNo}] 时刻: \${row.time}\`);`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '多信号跳变', 'detectMultiTransition', `\`[事件\${eventNo}] 时刻: \${row.time}\``));
     for (const child of step.children) {
       lines.push(...generateStepCode(child, level + 1));
     }
@@ -272,7 +277,7 @@ function genForEachEvent(step: WorkflowNode, level: number): string[] {
     return lines;
   }
 
-  lines.push(`${ind}  console.log(\`[事件\${eventNo}] 时刻: \${row.time}\`);`);
+  lines.push(stepLog(ind + '  ', step.id, step.label || '遍历事件', 'forEachEvent', `\`[事件\${eventNo}] 时刻: \${row.time}\``));
   if (step.children) {
     for (const child of step.children) {
       lines.push(...generateStepCode(child, level + 1));
@@ -425,7 +430,7 @@ function genLoopScan(step: WorkflowNode, level: number): string[] {
     lines.push(`${ind}const ${vn} = loopScan(data, ${startIndex}, ${maxRows}, [`);
     lines.push(checksCode);
     lines.push(`${ind}]);`);
-    lines.push(`${ind}console.log(\`循环扫描结果: \${${vn}.exitReason}, 检查项: \${${vn}.exitCheckName}, 行号: \${${vn}.exitIndex}\`);`);
+    lines.push(stepLog(ind, step.id, step.label || '循环扫描', 'loopScan', `\`退出原因: \${${vn}.exitReason}, 检查项: \${${vn}.exitCheckName}, 行号: \${${vn}.exitIndex}\``));
   }
 
   // 处理结果的子节点
@@ -472,7 +477,7 @@ function genAggregate(step: WorkflowNode, level: number): string[] {
   const lines: string[] = [];
 
   lines.push(`${ind}const ${vn} = aggregate(data, ${JSON.stringify(p.signal)}, ${p.startIndex || 0}, ${p.endIndex || 'data.length - 1'});`);
-  lines.push(`${ind}console.log(\`${step.label || '统计'}: min=\${${vn}.min}, max=\${${vn}.max}, avg=\${${vn}.avg.toFixed(2)}\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '统计', 'aggregate', `\`min=\${${vn}.min}, max=\${${vn}.max}, avg=\${${vn}.avg.toFixed(2)}\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -493,7 +498,7 @@ function genDetectDuration(step: WorkflowNode, level: number): string[] {
   const condCode = buildConditionCode(p);
 
   lines.push(`${ind}const ${vn} = detectDuration(data, ${startIndex}, ${condCode}, ${maxRows});`);
-  lines.push(`${ind}console.log(\`${step.label || '持续检测'}: 持续 \${${vn}.duration} 行\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '持续检测', 'detectDuration', `\`持续 \${${vn}.duration} 行\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -512,7 +517,7 @@ function genCountOccurrences(step: WorkflowNode, level: number): string[] {
   const condCode = buildConditionCode(p);
 
   lines.push(`${ind}const ${vn} = countOccurrences(data, ${p.startIndex || 0}, ${p.endIndex || 'data.length - 1'}, ${condCode});`);
-  lines.push(`${ind}console.log(\`${step.label || '计数'}: \${${vn}} 次\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '计数', 'countOccurrences', `\`\${${vn}} 次\``));
 
   return lines;
 }
@@ -530,15 +535,15 @@ function genFindFirst(step: WorkflowNode, level: number): string[] {
   if (step.children && step.children.length > 0) {
     lines.push(`${ind}if (${vn} !== -1) {`);
     lines.push(`${ind}  row = data[${vn}]; idx = ${vn};`);
-    lines.push(`${ind}  console.log(\`${step.label || '查找'}: 找到于行 \${${vn}}, 时刻 \${data[${vn}].time}\`);`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '查找', 'findFirst', `\`找到于行 \${${vn}}, 时刻 \${data[${vn}].time}\``));
     for (const child of step.children) {
       lines.push(...generateStepCode(child, level + 1));
     }
     lines.push(`${ind}} else {`);
-    lines.push(`${ind}  console.log(\`${step.label || '查找'}: 未找到匹配\`);`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '查找', 'findFirst', `'未找到匹配'`));
     lines.push(`${ind}}`);
   } else {
-    lines.push(`${ind}console.log(\`${step.label || '查找'}: \${${vn} !== -1 ? '找到于行 ' + ${vn} : '未找到'}\`);`);
+    lines.push(stepLog(ind, step.id, step.label || '查找', 'findFirst', `\`\${${vn} !== -1 ? '找到于行 ' + ${vn} : '未找到'}\``));
   }
 
   return lines;
@@ -553,7 +558,7 @@ function genFindAll(step: WorkflowNode, level: number): string[] {
 
   const startIdx = p.startIndex !== undefined ? `, ${p.startIndex}` : '';
   lines.push(`${ind}const ${vn} = findAll(data, ${condCode}${startIdx});`);
-  lines.push(`${ind}console.log(\`${step.label || '查找全部'}: 找到 \${${vn}.length} 个匹配\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '查找全部', 'findAll', `\`找到 \${${vn}.length} 个匹配\``));
 
   if (step.children && step.children.length > 0) {
     lines.push(`${ind}forEachEvent(data, ${vn}, (row, idx, eventNo) => {`);
@@ -596,7 +601,7 @@ function genDetectSequence(step: WorkflowNode, level: number): string[] {
   lines.push(`${ind}const ${vn} = detectSequence(data, [`);
   lines.push(stepsCode);
   lines.push(`${ind}]${startIdx});`);
-  lines.push(`${ind}console.log(\`${step.label || '序列检测'}: \${${vn}.matched ? '匹配成功' : '匹配失败'}\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '序列检测', 'detectSequence', `\`\${${vn}.matched ? '匹配成功' : '匹配失败'}\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -620,7 +625,7 @@ function genSlidingWindow(step: WorkflowNode, level: number): string[] {
 
   const startEnd = p.startIndex !== undefined ? `, ${p.startIndex}, ${p.endIndex || 'undefined'}` : '';
   lines.push(`${ind}const ${vn} = slidingWindow(data, ${p.windowSize || 10}, ${p.stepSize || 1}, ${calcCode}${startEnd});`);
-  lines.push(`${ind}console.log(\`${step.label || '滑动窗口'}: 生成 \${${vn}.length} 个窗口结果\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '滑动窗口', 'slidingWindow', `\`生成 \${${vn}.length} 个窗口结果\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -642,7 +647,7 @@ function genDetectStable(step: WorkflowNode, level: number): string[] {
   const maxRows = p.maxRows !== undefined ? `, ${p.maxRows}` : '';
 
   lines.push(`${ind}const ${vn} = detectStable(data, ${JSON.stringify(p.signal)}, ${startIndex}, ${p.tolerance || 1}${minDuration}${maxRows});`);
-  lines.push(`${ind}console.log(\`${step.label || '稳态检测'}: \${${vn}.isStable ? '稳定' : '不稳定'}, 持续 \${${vn}.stableDuration} 行\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '稳态检测', 'detectStable', `\`\${${vn}.isStable ? '稳定' : '不稳定'}, 持续 \${${vn}.stableDuration} 行\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -661,7 +666,7 @@ function genDetectOscillation(step: WorkflowNode, level: number): string[] {
 
   const minChanges = p.minChanges !== undefined ? `, ${p.minChanges}` : '';
   lines.push(`${ind}const ${vn} = detectOscillation(data, ${JSON.stringify(p.signal)}, ${p.startIndex || 0}, ${p.windowSize || 30}${minChanges});`);
-  lines.push(`${ind}console.log(\`${step.label || '抖动检测'}: \${${vn}.isOscillating ? '存在抖动' : '正常'}, 变化 \${${vn}.changeCount} 次\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '抖动检测', 'detectOscillation', `\`\${${vn}.isOscillating ? '存在抖动' : '正常'}, 变化 \${${vn}.changeCount} 次\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -680,7 +685,7 @@ function genComputeRate(step: WorkflowNode, level: number): string[] {
 
   const startEnd = p.startIndex !== undefined ? `, ${p.startIndex}, ${p.endIndex || 'data.length - 1'}` : '';
   lines.push(`${ind}const ${vn} = computeRate(data, ${JSON.stringify(p.signal)}${startEnd});`);
-  lines.push(`${ind}console.log(\`${step.label || '变化率'}: 计算了 \${${vn}.length} 个变化率\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '变化率', 'computeRate', `\`计算了 \${${vn}.length} 个变化率\``));
 
   if (step.children) {
     for (const child of step.children) {
@@ -699,7 +704,7 @@ function genGroupByState(step: WorkflowNode, level: number): string[] {
 
   const startEnd = p.startIndex !== undefined ? `, ${p.startIndex}, ${p.endIndex || 'undefined'}` : '';
   lines.push(`${ind}const ${vn} = groupByState(data, ${JSON.stringify(p.signal)}${startEnd});`);
-  lines.push(`${ind}console.log(\`${step.label || '状态分组'}: \${${vn}.length} 个状态段\`);`);
+  lines.push(stepLog(ind, step.id, step.label || '状态分组', 'groupByState', `\`\${${vn}.length} 个状态段\``));
 
   if (step.children) {
     for (const child of step.children) {

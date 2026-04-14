@@ -185,7 +185,7 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
             stepsMap.get(key)!.messages.push(parsed.msg);
             // 每次调用都写入时间线，不去重
             outputTimeline.push({ kind: 'step-header', stepId: key, label: parsed.label || key, module: parsed.module || '' });
-            outputTimeline.push({ kind: 'step-msg', text: parsed.msg });
+            outputTimeline.push({ kind: 'step-msg', stepId: key, text: parsed.msg });
             return;
           }
         } catch { /* 非 JSON，走兜底 */ }

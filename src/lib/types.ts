@@ -87,7 +87,7 @@ export interface StepReport {
 /** 统一输出条目 — 按实际执行顺序记录所有输出 */
 export type OutputEntry =
   | { kind: 'step-header'; stepId: string; label: string; module: string }
-  | { kind: 'step-msg'; text: string }
+  | { kind: 'step-msg'; stepId: string; text: string }
   | { kind: 'log'; text: string }
   | { kind: 'finding'; finding: Finding };
 

@@ -62,6 +62,12 @@ const FINDING_STYLES: Record<string, { icon: React.ReactNode; text: string; dot:
   info:    { icon: <Info size={13} className="text-blue-500 shrink-0" />, text: 'text-blue-700', dot: 'bg-blue-500' },
 };
 
+/** 从 stepId 计算层级深度：step_1 → 1, step_1_1 → 2, step_1_2_3 → 3 */
+function getStepDepth(stepId: string): number {
+  const body = stepId.replace(/^step_/, '');
+  return body.split('_').length;
+}
+
 interface ResultPanelProps {
   result: ExecutionResult;
   code?: string;
@@ -163,14 +169,16 @@ export default function ResultPanel({ result, code }: ResultPanelProps) {
       {hasTimeline && (
         <div>
           <h3 className="font-bold mb-2 text-gray-700">判断结果</h3>
-          <div className="relative pl-4 border-l-2 border-gray-200 space-y-0">
+          <div className="relative space-y-0">
             {outputTimeline.map((item, i) => {
               if (item.kind === 'step-header') {
+                const depth = getStepDepth(item.stepId);
+                const indent = (depth - 1) * 20;
                 const icon = MODULE_ICONS[item.module] || <Activity size={14} className="text-gray-400" />;
                 const moduleLabel = MODULE_LABELS[item.module] || item.module;
                 return (
-                  <div key={`sh-${i}`} className="relative flex items-center gap-2 py-1.5">
-                    <div className="absolute -left-[21px] w-2.5 h-2.5 rounded-full bg-gray-400 border-2 border-white" />
+                  <div key={`sh-${i}`} className="relative flex items-center gap-2 py-1.5" style={{ paddingLeft: `${indent + 4}px` }}>
+                    <div className="absolute w-2.5 h-2.5 rounded-full bg-gray-400 border-2 border-white" style={{ left: `${indent}px` }} />
                     {icon}
                     <span className="font-semibold text-sm text-gray-800">{item.label}</span>
                     <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-100 text-gray-500 font-mono">{moduleLabel}</span>
@@ -179,9 +187,11 @@ export default function ResultPanel({ result, code }: ResultPanelProps) {
               }
 
               if (item.kind === 'step-msg') {
+                const depth = getStepDepth(item.stepId);
+                const indent = (depth - 1) * 20;
                 return (
-                  <div key={`msg-${i}`} className="relative pl-5 py-0.5">
-                    <div className="absolute -left-[17px] top-[10px] w-1.5 h-1.5 rounded-full bg-gray-300" />
+                  <div key={`msg-${i}`} className="relative py-0.5" style={{ paddingLeft: `${indent + 20}px` }}>
+                    <div className="absolute w-1.5 h-1.5 rounded-full bg-gray-300" style={{ left: `${indent + 3}px`, top: '10px' }} />
                     <div className="text-xs font-mono text-gray-600 leading-relaxed">{item.text}</div>
                   </div>
                 );
@@ -190,7 +200,7 @@ export default function ResultPanel({ result, code }: ResultPanelProps) {
               if (item.kind === 'log') {
                 return (
                   <div key={`log-${i}`} className="relative pl-5 py-0.5">
-                    <div className="absolute -left-[17px] top-[10px] w-1.5 h-1.5 rounded-full bg-violet-400" />
+                    <div className="absolute left-[3px] top-[10px] w-1.5 h-1.5 rounded-full bg-violet-400" />
                     <div className="text-xs font-mono text-violet-700 leading-relaxed">{item.text}</div>
                   </div>
                 );
@@ -200,7 +210,7 @@ export default function ResultPanel({ result, code }: ResultPanelProps) {
                 const style = FINDING_STYLES[item.finding.type] || FINDING_STYLES.info;
                 return (
                   <div key={`fd-${i}`} className="relative flex items-start gap-2 pl-5 py-1">
-                    <div className={`absolute -left-[19px] top-[8px] w-2 h-2 rounded-full ${style.dot} border-2 border-white`} />
+                    <div className={`absolute left-[1px] top-[8px] w-2 h-2 rounded-full ${style.dot} border-2 border-white`} />
                     {style.icon}
                     <div className="flex-1 min-w-0">
                       <span className={`text-xs font-medium ${style.text}`}>{item.finding.message}</span>

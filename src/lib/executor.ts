@@ -4,7 +4,7 @@
  * 策略：用 ts-morph 将 TypeScript 编译为 JavaScript，再通过 Function 构造器执行
  * 生产环境可升级为 quickjs-emscripten 沙箱
  */
-import { DataTable, ExecutionResult, Finding, StepReport } from './types';
+import { DataTable, ExecutionResult, Finding, StepReport, OutputEntry } from './types';
 import { Project, ScriptTarget, ModuleKind, SyntaxKind } from 'ts-morph';
 import {
   scanAll, checkValue, checkMultiValues,
@@ -141,6 +141,7 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
   const logs: string[] = [];    // 系统追踪日志
   const findings: Finding[] = [];
   const stepsMap = new Map<string, StepReport>();  // 结构化步骤报告
+  const outputTimeline: OutputEntry[] = [];  // 按实际执行顺序记录所有输出
 
   try {
     const data = tableToSignalRows(table);
@@ -182,11 +183,15 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
               stepsMap.set(key, { stepId: key, label: parsed.label || key, module: parsed.module || '', messages: [] });
             }
             stepsMap.get(key)!.messages.push(parsed.msg);
+            // 每次调用都写入时间线，不去重
+            outputTimeline.push({ kind: 'step-header', stepId: key, label: parsed.label || key, module: parsed.module || '' });
+            outputTimeline.push({ kind: 'step-msg', text: parsed.msg });
             return;
           }
         } catch { /* 非 JSON，走兜底 */ }
         // 兜底：普通文本 → report（兼容旧代码/用户手写代码）
         report.push(msg);
+        outputTimeline.push({ kind: 'log', text: msg });
       },
       warn: (...args: any[]) => {
         const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
@@ -232,6 +237,10 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
 
     if (result && result.findings) {
       findings.push(...result.findings);
+      // findings 也按顺序追加到统一时间线
+      for (const f of result.findings) {
+        outputTimeline.push({ kind: 'finding', finding: f });
+      }
     }
 
     // 生成时间轴
@@ -250,11 +259,14 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
       report,
       logs,
       steps: Array.from(stepsMap.values()),
+      outputTimeline,
     };
   } catch (error) {
     const duration = Date.now() - startTime;
     const errMsg = error instanceof Error ? error.message : String(error);
     logs.push(`[FATAL] ${errMsg}`);
+
+    outputTimeline.push({ kind: 'finding', finding: { time: '', type: 'error', message: `执行错误: ${errMsg}` } });
 
     return {
       success: false,
@@ -265,6 +277,7 @@ export function executeCode(code: string, table: DataTable): ExecutionResult {
       report,
       logs,
       steps: Array.from(stepsMap.values()),
+      outputTimeline,
     };
   }
 }

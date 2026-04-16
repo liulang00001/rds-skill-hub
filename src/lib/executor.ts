@@ -97,13 +97,30 @@ function preflightSignalCheck(code: string, headers: string[]): string[] {
     strLiterals.add(match[1]);
   }
 
-  // 排除明显不是信号名的关键字
+  // 排除明显不是信号名的：关键字、标准模块名、代码标识符
   const excludeSet = new Set([
+    // 逻辑/模式关键字
     'and', 'or', 'true', 'false', 'always', 'ever', 'never',
+    // finding 类型
     'success', 'warning', 'info', 'error',
+    // 运算符/变换
     'abs', 'in', 'not_in', 'use strict',
+    // 结构化日志字段
     'row', 'data', 'findings', 'idx', 'time',
     '__step', 'label', 'module', 'msg',
+    // 标准模块函数名
+    'scanAll', 'checkValue', 'checkMultiValues',
+    'detectTransition', 'detectMultiTransition',
+    'checkTimeRange', 'loopScan', 'switchValue', 'forEachEvent',
+    'aggregate', 'detectDuration', 'countOccurrences',
+    'findFirst', 'findAll',
+    'compareSignals', 'detectSequence', 'slidingWindow',
+    'detectStable', 'detectOscillation', 'computeRate', 'groupByState',
+    'condition', 'output',
+    // analyze 函数及常见生成代码标识符
+    'analyze', 'allData', 'eventNo', 'result', 'summary',
+    'pass', 'fail', 'timeout', 'exitOnPass', 'exitOnFail',
+    'handler', 'values', 'name', 'type', 'message', 'details',
   ]);
 
   // 排除长文本（消息模板等）和包含空格的句子
@@ -122,8 +139,8 @@ function preflightSignalCheck(code: string, headers: string[]): string[] {
   const missingSignals: string[] = [];
   for (const signal of candidateSignals) {
     if (!headerSet.has(signal) && signal !== 'time') {
-      // 排除代码关键字和模块名
-      if (/^(function|const|let|var|return|if|else|for|while|break|continue|switch|case|typeof|string|number|boolean|object|any|void|null|undefined|SignalRow|Finding|AnalysisResult)$/.test(signal)) continue;
+      // 排除 JS/TS 关键字和类型名
+      if (/^(function|const|let|var|return|if|else|for|while|break|continue|switch|case|typeof|instanceof|new|this|throw|try|catch|finally|class|extends|import|export|default|from|of|do|with|yield|async|await|static|get|set|string|number|boolean|object|any|void|null|undefined|SignalRow|Finding|AnalysisResult|Array|Object|Number|String|Boolean|Date|Math|JSON|console|Infinity|NaN|parseInt|parseFloat|isNaN|length|push|filter|map|reduce|forEach|join|slice|splice|indexOf|includes|toString|toFixed|keys|log|warn)$/.test(signal)) continue;
       missingSignals.push(signal);
     }
   }

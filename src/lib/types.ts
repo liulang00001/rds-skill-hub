@@ -84,6 +84,13 @@ export interface StepReport {
   messages: string[];
 }
 
+/** 统一输出条目 — 按实际执行顺序记录所有输出 */
+export type OutputEntry =
+  | { kind: 'step-header'; stepId: string; label: string; module: string }
+  | { kind: 'step-msg'; stepId: string; text: string }
+  | { kind: 'log'; text: string }
+  | { kind: 'finding'; finding: Finding };
+
 /** 执行结果 */
 export interface ExecutionResult {
   success: boolean;
@@ -98,6 +105,8 @@ export interface ExecutionResult {
   logs: string[];
   /** 结构化步骤报告 */
   steps: StepReport[];
+  /** 按实际执行顺序排列的统一输出时间线 */
+  outputTimeline: OutputEntry[];
 }
 
 /** 分析发现 */

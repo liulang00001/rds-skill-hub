@@ -291,6 +291,7 @@ function genScanAll(step: WorkflowNode, level: number): string[] {
   const ind = '  '.repeat(level);
   const lines: string[] = [];
 
+  lines.push(stepLog(ind, step.id, step.label || '全量扫描', 'scanAll', `\`扫描 \${data.length} 行数据\``));
   lines.push(`${ind}scanAll(data, (row, i, allData) => {`);
   if (step.children) {
     for (const child of step.children) {
@@ -312,6 +313,7 @@ function genCheckValue(step: WorkflowNode, level: number): string[] {
 
   if (step.branches) {
     lines.push(`${ind}if (checkValue(${rowRef}, ${JSON.stringify(p.signal)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.value)}${transformArg})) {`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '值检查', 'checkValue', `\`${p.signal} ${p.operator} ${p.value} → 成立\``));
     const trueBranch = step.branches['true'] || step.branches['是'] || [];
     for (const child of trueBranch) {
       lines.push(...generateStepCode(child, level + 1));
@@ -319,6 +321,7 @@ function genCheckValue(step: WorkflowNode, level: number): string[] {
     const falseBranch = step.branches['false'] || step.branches['否'] || [];
     if (falseBranch.length > 0) {
       lines.push(`${ind}} else {`);
+      lines.push(stepLog(ind + '  ', step.id, step.label || '值检查', 'checkValue', `\`${p.signal} ${p.operator} ${p.value} → 不成立\``));
       for (const child of falseBranch) {
         lines.push(...generateStepCode(child, level + 1));
       }
@@ -326,6 +329,7 @@ function genCheckValue(step: WorkflowNode, level: number): string[] {
     lines.push(`${ind}}`);
   } else {
     lines.push(`${ind}const ${vn} = checkValue(${rowRef}, ${JSON.stringify(p.signal)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.value)}${transformArg});`);
+    lines.push(stepLog(ind, step.id, step.label || '值检查', 'checkValue', `\`${p.signal} ${p.operator} ${p.value} → \${${vn}}\``));
   }
 
   return lines;
@@ -340,6 +344,7 @@ function genCheckMultiValues(step: WorkflowNode, level: number): string[] {
 
   if (step.branches) {
     lines.push(`${ind}if (checkMultiValues(${rowRef}, ${JSON.stringify(p.conditions)}, ${JSON.stringify(p.logic || 'and')})) {`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '多值检查', 'checkMultiValues', `\`多值检查(${p.logic || 'and'}) → 成立\``));
     const trueBranch = step.branches['true'] || step.branches['是'] || [];
     for (const child of trueBranch) {
       lines.push(...generateStepCode(child, level + 1));
@@ -347,6 +352,7 @@ function genCheckMultiValues(step: WorkflowNode, level: number): string[] {
     const falseBranch = step.branches['false'] || step.branches['否'] || [];
     if (falseBranch.length > 0) {
       lines.push(`${ind}} else {`);
+      lines.push(stepLog(ind + '  ', step.id, step.label || '多值检查', 'checkMultiValues', `\`多值检查(${p.logic || 'and'}) → 不成立\``));
       for (const child of falseBranch) {
         lines.push(...generateStepCode(child, level + 1));
       }
@@ -354,6 +360,7 @@ function genCheckMultiValues(step: WorkflowNode, level: number): string[] {
     lines.push(`${ind}}`);
   } else {
     lines.push(`${ind}const ${vn} = checkMultiValues(${rowRef}, ${JSON.stringify(p.conditions)}, ${JSON.stringify(p.logic || 'and')});`);
+    lines.push(stepLog(ind, step.id, step.label || '多值检查', 'checkMultiValues', `\`多值检查(${p.logic || 'and'}) → \${${vn}}\``));
   }
 
   return lines;
@@ -383,6 +390,7 @@ function genCheckTimeRange(step: WorkflowNode, level: number): string[] {
 
   if (step.branches) {
     lines.push(`${ind}if (checkTimeRange(data, ${refIndex}, ${p.offsetBefore || 0}, ${p.offsetAfter || 0}, ${JSON.stringify(mode)}, ${conditionCode})) {`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '时间范围检查', 'checkTimeRange', `\`时间范围(${mode}) → 成立\``));
     const trueBranch = step.branches['true'] || step.branches['是'] || [];
     for (const child of trueBranch) {
       lines.push(...generateStepCode(child, level + 1));
@@ -390,6 +398,7 @@ function genCheckTimeRange(step: WorkflowNode, level: number): string[] {
     const falseBranch = step.branches['false'] || step.branches['否'] || [];
     if (falseBranch.length > 0) {
       lines.push(`${ind}} else {`);
+      lines.push(stepLog(ind + '  ', step.id, step.label || '时间范围检查', 'checkTimeRange', `\`时间范围(${mode}) → 不成立\``));
       for (const child of falseBranch) {
         lines.push(...generateStepCode(child, level + 1));
       }
@@ -397,6 +406,7 @@ function genCheckTimeRange(step: WorkflowNode, level: number): string[] {
     lines.push(`${ind}}`);
   } else {
     lines.push(`${ind}const ${vn} = checkTimeRange(data, ${refIndex}, ${p.offsetBefore || 0}, ${p.offsetAfter || 0}, ${JSON.stringify(mode)}, ${conditionCode});`);
+    lines.push(stepLog(ind, step.id, step.label || '时间范围检查', 'checkTimeRange', `\`时间范围(${mode}) → \${${vn}}\``));
   }
 
   return lines;
@@ -448,6 +458,8 @@ function genSwitchValue(step: WorkflowNode, level: number): string[] {
   const p = step.params;
   const lines: string[] = [];
   const rowRef = p.rowRef || 'row';
+
+  lines.push(stepLog(ind, step.id, step.label || '分支', 'switchValue', `\`${p.signal} = \${${rowRef}[${JSON.stringify(p.signal)}]}\``));
 
   if (step.branches) {
     const cases = Object.entries(step.branches).map(([key, branchSteps]) => {
@@ -577,7 +589,10 @@ function genCompareSignals(step: WorkflowNode, level: number): string[] {
   const vn = varName(step.id);
   const rowRef = p.rowRef || 'row';
   const offsetArg = p.offsetB !== undefined ? `, ${p.offsetB}` : '';
-  return [`${ind}const ${vn} = compareSignals(${rowRef}, ${JSON.stringify(p.signalA)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.signalB)}${offsetArg});`];
+  const lines: string[] = [];
+  lines.push(`${ind}const ${vn} = compareSignals(${rowRef}, ${JSON.stringify(p.signalA)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.signalB)}${offsetArg});`);
+  lines.push(stepLog(ind, step.id, step.label || '信号比较', 'compareSignals', `\`${p.signalA} ${p.operator} ${p.signalB} → \${${vn}}\``));
+  return lines;
 }
 
 function genDetectSequence(step: WorkflowNode, level: number): string[] {
@@ -738,6 +753,7 @@ function genCondition(step: WorkflowNode, level: number): string[] {
 
   if (step.branches) {
     lines.push(`${ind}if (${condExpr}) {`);
+    lines.push(stepLog(ind + '  ', step.id, step.label || '条件判断', 'condition', `\`条件 → 成立\``));
     const trueBranch = step.branches['true'] || step.branches['是'] || [];
     for (const child of trueBranch) {
       lines.push(...generateStepCode(child, level + 1));
@@ -745,6 +761,7 @@ function genCondition(step: WorkflowNode, level: number): string[] {
     const falseBranch = step.branches['false'] || step.branches['否'] || [];
     if (falseBranch.length > 0) {
       lines.push(`${ind}} else {`);
+      lines.push(stepLog(ind + '  ', step.id, step.label || '条件判断', 'condition', `\`条件 → 不成立\``));
       for (const child of falseBranch) {
         lines.push(...generateStepCode(child, level + 1));
       }
@@ -752,6 +769,7 @@ function genCondition(step: WorkflowNode, level: number): string[] {
     lines.push(`${ind}}`);
   } else {
     lines.push(`${ind}const condResult = ${condExpr};`);
+    lines.push(stepLog(ind, step.id, step.label || '条件判断', 'condition', `\`条件 → \${condResult}\``));
   }
 
   return lines;
@@ -761,6 +779,9 @@ function genOutput(step: WorkflowNode, level: number): string[] {
   const ind = '  '.repeat(level);
   const p = step.params;
   const lines: string[] = [];
+
+  const outputDesc = p.finding ? p.finding.message || '输出结果' : p.log || p.template || '输出';
+  lines.push(stepLog(ind, step.id, step.label || '输出', 'output', JSON.stringify(String(outputDesc))));
 
   if (p.finding) {
     const f = p.finding;

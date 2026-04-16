@@ -8,11 +8,12 @@ import { workflowToFlowChart } from '@/lib/json-to-flow';
 import ResultPanel from '@/components/ResultPanel';
 import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
-import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff } from 'lucide-react';
+import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
+import RequestLogPanel, { RequestLogEntry } from '@/components/RequestLogPanel';
 
 interface SavedSkill {
   name: string;
@@ -83,6 +84,98 @@ export default function Home() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [validating, setValidating] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+
+  // === 请求日志 ===
+  const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
+  const [showRequestLog, setShowRequestLog] = useState(false);
+  const requestIdRef = useRef(0);
+
+  /** 记录请求的 fetch 包装器（非 SSE） */
+  const loggedFetch = useCallback(async (url: string, init?: RequestInit): Promise<Response> => {
+    const id = ++requestIdRef.current;
+    const method = init?.method || 'GET';
+    let requestBody: any = null;
+    try { requestBody = init?.body ? JSON.parse(init.body as string) : null; } catch { requestBody = init?.body; }
+
+    const entry: RequestLogEntry = {
+      id,
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      method,
+      url,
+      requestBody,
+      responseStatus: null,
+      responseBody: undefined,
+      duration: null,
+      isSSE: false,
+    };
+    setRequestLogs(prev => [entry, ...prev]);
+
+    const start = performance.now();
+    try {
+      const res = await fetch(url, init);
+      const duration = Math.round(performance.now() - start);
+
+      // 克隆响应以读取 body 而不消耗原始流
+      let responseBody: any;
+      try { responseBody = await res.clone().json(); } catch { responseBody = '(非 JSON 响应)'; }
+
+      setRequestLogs(prev => prev.map(e => e.id === id ? { ...e, responseStatus: res.status, responseBody, duration } : e));
+      return res;
+    } catch (err) {
+      const duration = Math.round(performance.now() - start);
+      setRequestLogs(prev => prev.map(e => e.id === id ? { ...e, error: String(err), duration } : e));
+      throw err;
+    }
+  }, []);
+
+  /** 记录 SSE 请求的 fetch 包装器 — 返回 response 和 logId 以便后续追加 SSE 事件 */
+  const loggedFetchSSE = useCallback(async (url: string, init?: RequestInit): Promise<{ res: Response; logId: number }> => {
+    const id = ++requestIdRef.current;
+    const method = init?.method || 'GET';
+    let requestBody: any = null;
+    try { requestBody = init?.body ? JSON.parse(init.body as string) : null; } catch { requestBody = init?.body; }
+
+    const entry: RequestLogEntry = {
+      id,
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      method,
+      url,
+      requestBody,
+      responseStatus: null,
+      responseBody: undefined,
+      duration: null,
+      isSSE: true,
+      sseEvents: [],
+    };
+    setRequestLogs(prev => [entry, ...prev]);
+
+    const start = performance.now();
+    try {
+      const res = await fetch(url, init);
+      setRequestLogs(prev => prev.map(e => e.id === id ? { ...e, responseStatus: res.status } : e));
+      return { res, logId: id };
+    } catch (err) {
+      const duration = Math.round(performance.now() - start);
+      setRequestLogs(prev => prev.map(e => e.id === id ? { ...e, error: String(err), duration } : e));
+      throw err;
+    }
+  }, []);
+
+  /** 向 SSE 日志追加事件 */
+  const appendSSEEvent = useCallback((logId: number, type: string, data: any) => {
+    setRequestLogs(prev => prev.map(e =>
+      e.id === logId ? { ...e, sseEvents: [...(e.sseEvents || []), { type, data }] } : e
+    ));
+  }, []);
+
+  /** 结束 SSE 日志记录 */
+  const finishSSELog = useCallback((logId: number, responseBody?: any, error?: string) => {
+    setRequestLogs(prev => prev.map(e => {
+      if (e.id !== logId) return e;
+      // 计算 SSE 首事件到现在的时间作为 duration（近似）
+      return { ...e, responseBody, error: error || e.error, duration: Math.round(performance.now()) };
+    }));
+  }, []);
 
   // === 实时信号引用检查（不走大模型） ===
   // 1) 从信号清单解析出已定义的信号名集合
@@ -166,11 +259,11 @@ export default function Home() {
 
   const loadSkillList = useCallback(async () => {
     try {
-      const res = await fetch('/api/skills');
+      const res = await loggedFetch('/api/skills');
       const json = await res.json();
       if (json.success) setSavedSkills(json.skills);
     } catch {}
-  }, []);
+  }, [loggedFetch]);
 
   useEffect(() => { loadSkillList(); }, [loadSkillList]);
 
@@ -195,7 +288,8 @@ export default function Home() {
     startThinking();
 
     try {
-      const res = await fetch(apiUrl(API_VALIDATE_BASE, '/api/validate-logic'), {
+      const sseUrl = apiUrl(API_VALIDATE_BASE, '/api/validate-logic');
+      const { res, logId } = await loggedFetchSSE(sseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps }),
@@ -207,16 +301,17 @@ export default function Home() {
       await parseSSEStream(res, {
         onThinking: (content) => {
           setThinkingContent(prev => prev + content);
+          appendSSEEvent(logId, 'thinking', content);
         },
-        onToken: () => {
-          // 收到第一笔 token 时，结束思考
+        onToken: (content) => {
           if (!thinkingDone) {
             thinkingDone = true;
             finishThinking();
           }
+          appendSSEEvent(logId, 'token', content);
         },
         onProgress: (message) => {
-          // 校验的 progress 可选展示，此处暂忽略
+          appendSSEEvent(logId, 'progress', message);
         },
         onDone: (msg) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
@@ -225,12 +320,16 @@ export default function Home() {
           } else if (msg.error) {
             setError(msg.error as string);
           }
+          appendSSEEvent(logId, 'done', msg);
         },
         onError: (error) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
           setError(error);
+          appendSSEEvent(logId, 'error', error);
         },
       });
+
+      finishSSELog(logId, result || '(无结果)');
 
       if (result) {
         setValidationResult(result);
@@ -241,7 +340,7 @@ export default function Home() {
     } finally {
       setValidating(false);
     }
-  }, [signalsDef, analyzeSteps, startThinking, finishThinking]);
+  }, [signalsDef, analyzeSteps, startThinking, finishThinking, loggedFetchSSE, appendSSEEvent, finishSSELog]);
 
   // === 解析信号清单 ===
   const parseSignals = useCallback(() => {
@@ -284,7 +383,7 @@ export default function Home() {
   const handleSaveSkill = useCallback(async () => {
     if (!skillSaveName.trim()) return;
     try {
-      const res = await fetch('/api/skills', {
+      const res = await loggedFetch('/api/skills', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -310,12 +409,12 @@ export default function Home() {
     } catch (e) {
       setError(String(e));
     }
-  }, [skillSaveName, skillSaveDesc, signalsDef, analyzeSteps, workflowDef, code, validationResult, loadSkillList]);
+  }, [skillSaveName, skillSaveDesc, signalsDef, analyzeSteps, workflowDef, code, validationResult, loadSkillList, loggedFetch]);
 
   // === Skill 加载 ===
   const handleLoadSkill = useCallback(async (name: string) => {
     try {
-      const res = await fetch(`/api/skills/${encodeURIComponent(name)}`);
+      const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}`);
       const json = await res.json();
       if (json.success) {
         const skill: SkillData = json.skill;
@@ -342,12 +441,12 @@ export default function Home() {
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [loggedFetch]);
 
   // === Skill 删除 ===
   const handleDeleteSkill = useCallback(async (name: string) => {
     try {
-      const res = await fetch('/api/skills', {
+      const res = await loggedFetch('/api/skills', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -358,7 +457,7 @@ export default function Home() {
         loadSkillList();
       }
     } catch {}
-  }, [activeSkillName, loadSkillList]);
+  }, [activeSkillName, loadSkillList, loggedFetch]);
 
   // === 步骤 1: 自然语言 → JSON 工作流定义 → 流程图（SSE 流式） ===
   const handleGenerate = useCallback(async () => {
@@ -376,7 +475,8 @@ export default function Home() {
     const parsedSignals = parseSignals();
 
     try {
-      const res = await fetch(apiUrl(API_GENERATE_BASE, '/api/generate'), {
+      const genUrl = apiUrl(API_GENERATE_BASE, '/api/generate');
+      const { res, logId } = await loggedFetchSSE(genUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: analyzeSteps, signals: parsedSignals }),
@@ -389,12 +489,13 @@ export default function Home() {
       await parseSSEStream(res, {
         onThinking: (content) => {
           setThinkingContent(prev => prev + content);
+          appendSSEEvent(logId, 'thinking', content);
         },
         onProgress: (message) => {
           setStreamLog(prev => [...prev, { type: 'progress', text: message }]);
+          appendSSEEvent(logId, 'progress', message);
         },
         onToken: (content) => {
-          // 收到第一笔 token 时，结束思考
           if (!thinkingDone) {
             thinkingDone = true;
             finishThinking();
@@ -406,16 +507,21 @@ export default function Home() {
             }
             return [...prev, { type: 'token', text: content }];
           });
+          appendSSEEvent(logId, 'token', content);
         },
         onDone: (msg) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
           wfDef = msg.workflowDef as unknown as WorkflowDefinition;
+          appendSSEEvent(logId, 'done', msg);
         },
         onError: (error) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
+          appendSSEEvent(logId, 'error', error);
           throw new Error(error);
         },
       });
+
+      finishSSELog(logId, wfDef || '(无结果)');
 
       if (!wfDef) throw new Error('未收到工作流定义');
 
@@ -427,7 +533,7 @@ export default function Home() {
       setStatus('generating-code');
       setStreamLog(prev => [...prev, { type: 'progress', text: '正在生成 TypeScript 代码...' }]);
 
-      const codeRes = await fetch('/api/generate-code', {
+      const codeRes = await loggedFetch('/api/generate-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflowDef: wfDef }),
@@ -446,7 +552,7 @@ export default function Home() {
     } finally {
       setStatus('idle');
     }
-  }, [analyzeSteps, parseSignals, startThinking, finishThinking]);
+  }, [analyzeSteps, parseSignals, startThinking, finishThinking, loggedFetch, loggedFetchSSE, appendSSEEvent, finishSSELog]);
 
   // === JSON 编辑 → 应用更改 ===
   const handleJsonChange = useCallback((value: string | undefined) => {
@@ -474,7 +580,7 @@ export default function Home() {
       const chart = workflowToFlowChart(parsed);
       setFlowChart(chart);
       setCode('');
-      const codeRes = await fetch('/api/generate-code', {
+      const codeRes = await loggedFetch('/api/generate-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflowDef: parsed }),
@@ -489,7 +595,7 @@ export default function Home() {
     } catch (e) {
       setJsonError(String(e).replace('SyntaxError: ', ''));
     }
-  }, [jsonText]);
+  }, [jsonText, loggedFetch]);
 
   const handleRevertJson = useCallback(() => {
     if (workflowDef) {
@@ -556,7 +662,7 @@ export default function Home() {
     if (!code.trim() && workflowDef) {
       setStatus('generating-code');
       try {
-        const codeRes = await fetch('/api/generate-code', {
+        const codeRes = await loggedFetch('/api/generate-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ workflowDef }),
@@ -581,7 +687,7 @@ export default function Home() {
 
     const effectiveData = getEffectiveData();
     try {
-      const res = await fetch('/api/execute', {
+      const res = await loggedFetch('/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, data: effectiveData }),
@@ -596,7 +702,7 @@ export default function Home() {
     } finally {
       setStatus('idle');
     }
-  }, [code, data, workflowDef, getEffectiveData]);
+  }, [code, data, workflowDef, getEffectiveData, loggedFetch]);
 
   // === 流程图节点点击 ===
   const handleNodeClick = useCallback((nodeId: string, codeRange?: { startLine: number; endLine: number }) => {
@@ -707,6 +813,23 @@ export default function Home() {
             结果
           </span>
         </div>
+
+        {/* 请求日志开关 */}
+        <button
+          onClick={() => setShowRequestLog(!showRequestLog)}
+          className={`flex items-center gap-1 px-2 py-1 text-[10px] rounded transition ${
+            showRequestLog
+              ? 'bg-orange-100 text-orange-600 border border-orange-300'
+              : 'text-[var(--muted)] hover:text-[var(--fg)] border border-transparent hover:border-[var(--border)]'
+          }`}
+          title="网络请求日志"
+        >
+          <Activity size={12} />
+          请求日志
+          {requestLogs.length > 0 && (
+            <span className="ml-0.5 px-1 py-0 text-[9px] rounded-full bg-orange-400 text-white leading-tight">{requestLogs.length}</span>
+          )}
+        </button>
 
         {/* 隐藏的文件上传 input */}
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
@@ -1334,6 +1457,15 @@ export default function Home() {
           }
         }}
       />
+
+      {/* 请求日志面板 */}
+      {showRequestLog && (
+        <RequestLogPanel
+          logs={requestLogs}
+          onClear={() => setRequestLogs([])}
+          onClose={() => setShowRequestLog(false)}
+        />
+      )}
     </div>
   );
 }

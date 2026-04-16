@@ -1,0 +1,10 @@
+{
+  "name": "11",
+  "description": "",
+  "signalsDef": "VehLckngSta ⻋锁信号：0 代表解锁，2代表内锁，3代表外锁\nRLDoorOpenSts 左后⻔开关信号：0 代表关闭，2代表半开，3代表全开。\nRRDoorOpenSts 右后⻔开关信号：0 代表关闭，2代表半开，3代表全开。\nDrvrDoorOpenSts 主驾⻔开关信号：0 代表关闭，2代表半开，3代表全开。\nFrtPsngDoorOpenSts 副驾⻔开关信号：0 代表关闭，2代表半开，3代表全开。\nLdspcOpenSts 后备箱开关信号：0代表关闭，1代表打开。\nBCMDrvrDetSts 主驾占位信号：0代表⽆占位，1代表有占位。\nDigKey1Loctn 主账号蓝⽛钥匙位置：0，1，2 代表落锁区域（同时0代表未连接，1，2代表已连接 但处于落锁区域）；3，4，5，6，7，9，11代表解锁区域。\nDigKey2Loctn 授权账号蓝⽛钥匙位置：0，1，2 代表落锁区域（同时0代表未连接，1，2代表已连接 但处于落锁区域）；3，4，5，6，7，9，11代表解锁区域。\nEPTRdy ⻋辆是否上ready状态：0代表未上ready，1代表已上ready。",
+  "analyzeSteps": "2.1 从上传的数据清单中按照上报时间从前往后查询：\n    a. 识别所有四⻔⼀盖信号（RLDoorOpenSts，RRDoorOpenSts，DrvrDoorOpenSts，FrtPsngDoorOpenSts，LdspcOpenSts）从⾮0跳变到0的时刻，且此时其他所有⻔信号均为0。\n    b. 对于每个候选时刻T：\n        i. 检查T时刻前10秒内是否存在主驾占位从0变为1（BCMDrvrDetSts=1）的情况。\n        ii. 若存在，则判定为上⻋场景，跳过该时刻，继续寻找下⼀个候选时刻。\n        iii. 若不存在，则判定为离⻋场景，记录该时刻为关闭最后⼀扇⻔的时间，进⼊步骤2.2。\n2.2 基于2.1识别到的关闭最后⼀扇⻔的时刻，查询蓝⽛钥匙连接状态。\n    i. 若DigKey1Loctn或DigKey2Loctn 不为0，则关⻔时蓝⽛钥匙是连接状态，触发判断逻辑开始向后计时查询跳转到步骤2.3；\n    ii.若DigKey1Loctn和DigKey2Loctn 都为0，记录时间，输出该时刻离⻋未落锁的原因是离⻋时蓝⽛钥匙断联。\n2.3 向后计时连续查询8秒，每1秒检查四⻔⼀盖都关闭（RLDoorOpenSts，RRDoorOpenSts，DrvrDoorOpenSts，FrtPsngDoorOpenSts，LdspcOpenSts均为0），主驾⽆占位（BCMDrvrDetSts=0），下ready（EPTRdy=0）\n    i.若其中有四⻔⼀盖条件不满⾜（RLDoorOpenSts，RRDoorOpenSts，DrvrDoorOpenSts，FrtPsngDoorOpenSts，LdspcOpenSts有不等于0的情况）或主驾占位或下ready条件不满⾜（BCMDrvrDetSts≠0，EPTRdy≠0）记录时间和不满⾜信息（未落锁原因）。\n    ii.若连续8S以上条件均满⾜，执⾏步骤2.4。\n2.4 从第9S开始，检查四⻔⼀盖都关闭（RLDoorOpenSts，RRDoorOpenSts，DrvrDoorOpenSts，FrtPsngDoorOpenSts，LdspcOpenSts均为0），主驾⽆占位（BCMDrvrDetSts=0），下ready（EPTRdy=0），增加判断蓝⽛定位判断。\n    i.若其中有四⻔⼀盖条件不满⾜（RLDoorOpenSts，RRDoorOpenSts，DrvrDoorOpenSts，FrtPsngDoorOpenSts，LdspcOpenSts有不等于0的情况）或主驾占位或下ready条件不满⾜（BCMDrvrDetSts≠0，EPTRdy≠0）记录时间和不满⾜信息（未落锁原因）。\n    ii.若四⻔⼀盖和主驾⽆占位和下ready条件都满⾜，且蓝⽛定位满⾜在0或1或2区（DigKey1Loctn以及DigKey2Loctn，同时满⾜等于0或1或2），即可以触发落锁（VehLckngSta=3），记录落锁时间；\n    iii.若四⻔⼀盖和主驾⽆占位和下ready条件都满⾜，但蓝⽛定位条件不满⾜，从下⼀秒开始重复执⾏\n2.4步骤重复600s。若重复执⾏600s后还未找到蓝⽛钥匙定位满⾜的情况，重复执⾏动作结束，记录时间，并输出未落锁的原因为蓝⽛钥匙定位不满⾜。",
+  "workflowDef": null,
+  "code": "",
+  "validationResult": null,
+  "savedAt": "2026-04-14T02:26:55.047Z"
+}

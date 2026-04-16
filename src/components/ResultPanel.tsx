@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useState } from 'react';
-import { ExecutionResult, StepReport } from '@/lib/types';
-import { Download, ChevronDown, ChevronRight, Activity, Search, BarChart3, Clock, Zap, GitBranch, Repeat, Filter, Hash, ArrowRightLeft, ListOrdered, SlidersHorizontal, Gauge, TrendingUp, Layers } from 'lucide-react';
+import { useCallback } from 'react';
+import { ExecutionResult, Finding, StepReport, OutputEntry } from '@/lib/types';
+import { Download, Activity, Search, BarChart3, Clock, Zap, GitBranch, Repeat, Filter, Hash, ArrowRightLeft, ListOrdered, SlidersHorizontal, Gauge, TrendingUp, Layers, CheckCircle2, AlertTriangle, XCircle, Info } from 'lucide-react';
 
 /** 模块类型 → 图标映射 */
 const MODULE_ICONS: Record<string, React.ReactNode> = {
@@ -54,43 +54,23 @@ const MODULE_LABELS: Record<string, string> = {
   groupByState: '状态分组',
 };
 
+/** Finding 类型 → 颜色样式 */
+const FINDING_STYLES: Record<string, { icon: React.ReactNode; text: string; dot: string }> = {
+  success: { icon: <CheckCircle2 size={13} className="text-green-500 shrink-0" />, text: 'text-green-700', dot: 'bg-green-500' },
+  warning: { icon: <AlertTriangle size={13} className="text-amber-500 shrink-0" />, text: 'text-amber-700', dot: 'bg-amber-500' },
+  error:   { icon: <XCircle size={13} className="text-red-500 shrink-0" />, text: 'text-red-700', dot: 'bg-red-500' },
+  info:    { icon: <Info size={13} className="text-blue-500 shrink-0" />, text: 'text-blue-700', dot: 'bg-blue-500' },
+};
+
+/** 从 stepId 计算层级深度：step_1 → 1, step_1_1 → 2, step_1_2_3 → 3 */
+function getStepDepth(stepId: string): number {
+  const body = stepId.replace(/^step_/, '');
+  return body.split('_').length;
+}
+
 interface ResultPanelProps {
   result: ExecutionResult;
   code?: string;
-}
-
-/** 步骤卡片组件 */
-function StepCard({ step, defaultOpen }: { step: StepReport; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const icon = MODULE_ICONS[step.module] || <Activity size={14} className="text-gray-400" />;
-  const moduleLabel = MODULE_LABELS[step.module] || step.module;
-
-  return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 transition text-left"
-      >
-        {open ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
-        {icon}
-        <span className="font-medium text-sm truncate">{step.label}</span>
-        <span className="ml-auto flex items-center gap-2 shrink-0">
-          <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-200 text-gray-600 font-mono">{moduleLabel}</span>
-          <span className="text-[10px] text-gray-400">{step.messages.length} 条</span>
-        </span>
-      </button>
-      {open && (
-        <div className="px-3 py-2 bg-white space-y-0.5 max-h-48 overflow-auto">
-          {step.messages.map((msg, i) => (
-            <div key={i} className="text-xs font-mono text-gray-700 leading-relaxed py-0.5">
-              <span className="text-gray-300 mr-2 select-none">{i + 1}.</span>
-              {msg}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** 生成调试日志文件内容 */
@@ -162,8 +142,6 @@ function buildDebugLog(result: ExecutionResult, code?: string): string {
 }
 
 export default function ResultPanel({ result, code }: ResultPanelProps) {
-  const [showDebugLogs, setShowDebugLogs] = useState(false);
-
   const handleDownloadLog = useCallback(() => {
     const content = buildDebugLog(result, code);
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -176,76 +154,114 @@ export default function ResultPanel({ result, code }: ResultPanelProps) {
     URL.revokeObjectURL(url);
   }, [result, code]);
 
-  const hasSteps = result.steps && result.steps.length > 0;
+  const outputTimeline = result.outputTimeline || [];
+  const hasTimeline = outputTimeline.length > 0;
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4 text-sm">
-      {/* 摘要卡片：成功/失败 + summary + 耗时 */}
-      <div className={`p-3 rounded border-l-4 ${result.success ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800'}`}>
-        <div className="flex items-center justify-between">
-          <div className="font-bold">{result.success ? '✅ 执行成功' : '❌ 执行失败'}</div>
-          <button
-            onClick={handleDownloadLog}
-            className="flex items-center gap-1 px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 transition text-gray-700"
-          >
-            <Download size={12} />
-            下载调试日志
-          </button>
-        </div>
-        <div className="mt-1">{result.summary}</div>
-        <div className="mt-1 text-xs opacity-70">耗时 {result.duration}ms</div>
+      {/* ===== 摘要卡片：成功/失败 + 耗时（无 summary） ===== */}
+      <div className={`px-3 py-2 rounded border-l-4 flex items-center justify-between ${result.success ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800'}`}>
+        <div className="font-bold">{result.success ? '✅ 执行成功' : '❌ 执行失败'}</div>
+        <div className="text-xs opacity-70">耗时 {result.duration}ms</div>
       </div>
 
-      {/* 步骤卡片列表 */}
-      {hasSteps && (
+      {/* ===== 判断结果 — 按实际执行顺序的时间线树 ===== */}
+      {hasTimeline && (
         <div>
-          <h3 className="font-bold mb-2 text-gray-700">分析步骤 ({result.steps.length})</h3>
-          <div className="space-y-2">
-            {result.steps.map((step, i) => (
-              <StepCard key={step.stepId} step={step} defaultOpen={i < 2} />
-            ))}
+          <h3 className="font-bold mb-2 text-gray-700">判断结果</h3>
+          <div className="relative space-y-0">
+            {outputTimeline.map((item, i) => {
+              if (item.kind === 'step-header') {
+                const depth = getStepDepth(item.stepId);
+                const indent = (depth - 1) * 20;
+                const icon = MODULE_ICONS[item.module] || <Activity size={14} className="text-gray-400" />;
+                const moduleLabel = MODULE_LABELS[item.module] || item.module;
+                return (
+                  <div key={`sh-${i}`} className="relative flex items-center gap-2 py-1.5" style={{ paddingLeft: `${indent + 4}px` }}>
+                    <div className="absolute w-2.5 h-2.5 rounded-full bg-gray-400 border-2 border-white" style={{ left: `${indent}px` }} />
+                    {icon}
+                    <span className="font-semibold text-sm text-gray-800">{item.label}</span>
+                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-100 text-gray-500 font-mono">{moduleLabel}</span>
+                  </div>
+                );
+              }
+
+              if (item.kind === 'step-msg') {
+                const depth = getStepDepth(item.stepId);
+                const indent = (depth - 1) * 20;
+                return (
+                  <div key={`msg-${i}`} className="relative py-0.5" style={{ paddingLeft: `${indent + 20}px` }}>
+                    <div className="absolute w-1.5 h-1.5 rounded-full bg-gray-300" style={{ left: `${indent + 3}px`, top: '10px' }} />
+                    <div className="text-xs font-mono text-gray-600 leading-relaxed">{item.text}</div>
+                  </div>
+                );
+              }
+
+              if (item.kind === 'log') {
+                return (
+                  <div key={`log-${i}`} className="relative pl-5 py-0.5">
+                    <div className="absolute left-[3px] top-[10px] w-1.5 h-1.5 rounded-full bg-violet-400" />
+                    <div className="text-xs font-mono text-violet-700 leading-relaxed">{item.text}</div>
+                  </div>
+                );
+              }
+
+              if (item.kind === 'finding') {
+                const style = FINDING_STYLES[item.finding.type] || FINDING_STYLES.info;
+                return (
+                  <div key={`fd-${i}`} className="relative flex items-start gap-2 pl-5 py-1">
+                    <div className={`absolute left-[1px] top-[8px] w-2 h-2 rounded-full ${style.dot} border-2 border-white`} />
+                    {style.icon}
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-medium ${style.text}`}>{item.finding.message}</span>
+                      {(item.finding.time || item.finding.details) && (
+                        <div className="text-[11px] text-gray-400 mt-0.5">
+                          {item.finding.time && <span>时间: {item.finding.time}</span>}
+                          {item.finding.details && Object.keys(item.finding.details).length > 0 && (
+                            <span className="ml-2 font-mono">
+                              {Object.entries(item.finding.details).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join('  ')}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
+              return null;
+            })}
           </div>
         </div>
       )}
 
-      {/* 兼容旧代码：无 steps 时回退显示 report */}
-      {!hasSteps && result.report && result.report.length > 0 && (
-        <div>
-          <h3 className="font-bold mb-2 text-gray-700">分析报告</h3>
-          <div className="bg-white border border-gray-200 rounded-lg p-3 text-xs font-mono space-y-0.5 max-h-80 overflow-auto">
-            {result.report.map((line, i) => (
-              <div key={i} className="leading-relaxed">{line}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 系统调试日志（可折叠） */}
+      {/* ===== 系统调试日志 — 默认展开，日志下载按钮在标题右侧 ===== */}
       {result.logs.length > 0 && (
         <div>
-          <button
-            onClick={() => setShowDebugLogs(!showDebugLogs)}
-            className="flex items-center gap-1 font-bold mb-2 text-gray-500 hover:text-gray-700 transition"
-          >
-            {showDebugLogs ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            系统调试日志 ({result.logs.length})
-          </button>
-          {showDebugLogs && (
-            <div className="bg-gray-900 text-green-400 rounded p-3 text-xs font-mono max-h-60 overflow-auto">
-              {result.logs.map((log, i) => (
-                <div key={i} className={
-                  log.includes('[FATAL]') || log.includes('[ERROR]') ? 'text-red-400' :
-                  log.includes('[WARN]') ? 'text-yellow-400' :
-                  log.includes('[TRACE') ? 'text-cyan-400' :
-                  log.includes('[DEBUG') ? 'text-purple-400' :
-                  log.includes('[INFO]') ? 'text-blue-400' :
-                  ''
-                }>
-                  {log}
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-bold text-gray-500">系统调试日志 ({result.logs.length})</h3>
+            <button
+              onClick={handleDownloadLog}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 transition text-gray-700"
+            >
+              <Download size={12} />
+              日志下载
+            </button>
+          </div>
+          <div className="bg-gray-900 text-green-400 rounded p-3 text-xs font-mono max-h-60 overflow-auto">
+            {result.logs.map((log, i) => (
+              <div key={i} className={
+                log.includes('[FATAL]') || log.includes('[ERROR]') ? 'text-red-400' :
+                log.includes('[WARN]') ? 'text-yellow-400' :
+                log.includes('[TRACE') ? 'text-cyan-400' :
+                log.includes('[DEBUG') ? 'text-purple-400' :
+                log.includes('[INFO]') ? 'text-blue-400' :
+                ''
+              }>
+                {log}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -15,7 +15,6 @@ tsconfig.tsbuildinfo
 logs/
 
 # saved skills (user-generated runtime data, root level only)
-/skills/
 
 # IDE & editor
 .claude/

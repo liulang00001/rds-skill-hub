@@ -199,12 +199,13 @@ export function detectTransition(
     // 检查 to 是否匹配
     if (curr != to) continue;
 
-    // 检查 from 是否匹配
+    // 检查 from 是否匹配（支持 '*' 通配、'!N' 取反、字面量）
     let fromMatch = false;
     if (from === '*') {
       fromMatch = true;
-    } else if (from === '!0') {
-      fromMatch = prev != 0;
+    } else if (typeof from === 'string' && from.startsWith('!')) {
+      const notVal = from.slice(1);
+      fromMatch = String(prev) !== notVal && prev != Number(notVal);
     } else {
       fromMatch = prev == from;
     }
@@ -260,9 +261,14 @@ export function detectMultiTransition(
       if (curr != t.to) continue;
 
       let fromMatch = false;
-      if (t.from === '*') fromMatch = true;
-      else if (t.from === '!0') fromMatch = prev != 0;
-      else fromMatch = prev == t.from;
+      if (t.from === '*') {
+        fromMatch = true;
+      } else if (typeof t.from === 'string' && t.from.startsWith('!')) {
+        const notVal = t.from.slice(1);
+        fromMatch = String(prev) !== notVal && prev != Number(notVal);
+      } else {
+        fromMatch = prev == t.from;
+      }
 
       if (fromMatch) { anyTransition = true; break; }
     }

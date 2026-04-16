@@ -5,18 +5,13 @@
  * DELETE - 删除 skill
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { readdirSync, writeFileSync, readFileSync, mkdirSync, statSync, unlinkSync } from 'fs';
+import { readdirSync, writeFileSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-
-const SKILLS_DIR = join(process.cwd(), 'skills');
-
-function ensureDir() {
-  mkdirSync(SKILLS_DIR, { recursive: true });
-}
+import { SKILLS_DIR, ensureDir } from '@/lib/data-dir';
 
 export async function GET() {
   try {
-    ensureDir();
+    ensureDir(SKILLS_DIR);
     const files = readdirSync(SKILLS_DIR)
       .filter(f => f.endsWith('.json'))
       .map(f => {
@@ -41,7 +36,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    ensureDir();
+    ensureDir(SKILLS_DIR);
     const body = await request.json();
     const { name, signalsDef, analyzeSteps, workflowDef, code, description, validationResult } = body;
 

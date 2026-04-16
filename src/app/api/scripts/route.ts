@@ -4,18 +4,13 @@
  * POST - 保存新脚本
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { readdirSync, writeFileSync, readFileSync, mkdirSync, statSync, unlinkSync } from 'fs';
+import { readdirSync, writeFileSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-
-const SCRIPTS_DIR = join(process.cwd(), 'scripts');
-
-function ensureDir() {
-  mkdirSync(SCRIPTS_DIR, { recursive: true });
-}
+import { SCRIPTS_DIR, ensureDir } from '@/lib/data-dir';
 
 export async function GET() {
   try {
-    ensureDir();
+    ensureDir(SCRIPTS_DIR);
     const files = readdirSync(SCRIPTS_DIR)
       .filter(f => f.endsWith('.ts'))
       .map(f => {
@@ -38,7 +33,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    ensureDir();
+    ensureDir(SCRIPTS_DIR);
     const { name, code } = await request.json();
 
     if (!name || !code) {

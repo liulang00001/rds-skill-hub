@@ -1,6 +1,6 @@
 /**
  * 通用 SSE 流式解析器
- * 用于 /api/generate 和 /api/validate-logic 等 SSE 接口的客户端解析
+ * 用于 SSE 接口的客户端解析
  */
 
 export interface SSEHandlers {

@@ -11,6 +11,7 @@ import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
 import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
 import { getClientContext } from '@/lib/client-context';
+import { logEvent } from '@/lib/browser-logger';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
@@ -282,6 +283,7 @@ export default function Home() {
   // === 逻辑校验（SSE 流式） ===
   const handleValidateLogic = useCallback(async () => {
     if (!signalsDef.trim() && !analyzeSteps.trim()) return;
+    logEvent('INFO', `[UI] 点击逻辑校验 signals_len=${signalsDef.length} steps_len=${analyzeSteps.length}`);
     setValidating(true);
     setValidationResult(null);
     setShowDiff(false);
@@ -320,12 +322,14 @@ export default function Home() {
             result = msg.result as unknown as ValidationResult;
           } else if (msg.error) {
             setError(msg.error as string);
+            logEvent('ERROR', `[UI] 逻辑校验失败(done携带error): ${msg.error}`);
           }
           appendSSEEvent(logId, 'done', msg);
         },
         onError: (error) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
           setError(error);
+          logEvent('ERROR', `[UI] 逻辑校验 SSE onError: ${error}`);
           appendSSEEvent(logId, 'error', error);
         },
       });
@@ -334,10 +338,13 @@ export default function Home() {
 
       if (result) {
         setValidationResult(result);
+        const r = result as ValidationResult;
+        logEvent('INFO', `[UI] 逻辑校验完成 signal=${r.signalCheck?.passed} logic=${r.logicCheck?.passed} adapt=${r.adaptabilityCheck?.passed}`);
       }
     } catch (e) {
       finishThinking();
       setError(String(e));
+      logEvent('ERROR', `[UI] 逻辑校验异常: ${String(e)}`);
     } finally {
       setValidating(false);
     }
@@ -383,6 +390,7 @@ export default function Home() {
   // === Skill 保存 ===
   const handleSaveSkill = useCallback(async () => {
     if (!skillSaveName.trim()) return;
+    logEvent('INFO', `[UI] 点击保存 Skill name="${skillSaveName.trim()}" desc_len=${skillSaveDesc.length} has_workflow=${!!workflowDef} code_len=${code.length}`);
     try {
       const res = await loggedFetch('/api/skills', {
         method: 'POST',
@@ -399,26 +407,31 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.success) {
+        logEvent('INFO', `[UI] Skill 保存成功 name="${json.name}"`);
         setShowSkillSave(false);
         setSkillSaveName('');
         setSkillSaveDesc('');
         setActiveSkillName(json.name);
         loadSkillList();
       } else {
+        logEvent('ERROR', `[UI] Skill 保存失败: ${json.error}`);
         setError(json.error);
       }
     } catch (e) {
+      logEvent('ERROR', `[UI] Skill 保存异常: ${String(e)}`);
       setError(String(e));
     }
   }, [skillSaveName, skillSaveDesc, signalsDef, analyzeSteps, workflowDef, code, validationResult, loadSkillList, loggedFetch]);
 
   // === Skill 加载 ===
   const handleLoadSkill = useCallback(async (name: string) => {
+    logEvent('INFO', `[UI] 点击加载 Skill name="${name}"`);
     try {
       const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}`);
       const json = await res.json();
       if (json.success) {
         const skill: SkillData = json.skill;
+        logEvent('INFO', `[UI] Skill 加载成功 name="${name}" has_workflow=${!!skill.workflowDef} code_len=${(skill.code || '').length}`);
         setSignalsDef(skill.signalsDef || '');
         setAnalyzeSteps(skill.analyzeSteps || '');
         if (skill.workflowDef) {
@@ -437,15 +450,18 @@ export default function Home() {
         setResult(null);
         setActiveTab('logic');
       } else {
+        logEvent('ERROR', `[UI] Skill 加载失败 name="${name}" err=${json.error}`);
         setError(json.error);
       }
     } catch (e) {
+      logEvent('ERROR', `[UI] Skill 加载异常 name="${name}": ${String(e)}`);
       setError(String(e));
     }
   }, [loggedFetch]);
 
   // === Skill 删除 ===
   const handleDeleteSkill = useCallback(async (name: string) => {
+    logEvent('INFO', `[UI] 点击删除 Skill name="${name}"`);
     try {
       const res = await loggedFetch('/api/skills', {
         method: 'DELETE',
@@ -454,15 +470,23 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.success) {
+        logEvent('INFO', `[UI] Skill 删除成功 name="${name}"`);
         if (activeSkillName === name) setActiveSkillName(null);
         loadSkillList();
+      } else {
+        logEvent('WARN', `[UI] Skill 删除失败 name="${name}" err=${json.error}`);
       }
-    } catch {}
+    } catch (e) {
+      logEvent('ERROR', `[UI] Skill 删除异常 name="${name}": ${String(e)}`);
+    }
   }, [activeSkillName, loadSkillList, loggedFetch]);
 
   // === 步骤 1: 自然语言 → JSON 工作流定义 → 流程图（SSE 流式） ===
   const handleGenerate = useCallback(async () => {
     if (!analyzeSteps.trim()) return;
+
+    const parsedSignals = parseSignals();
+    logEvent('INFO', `[UI] 点击生成工作流 steps_len=${analyzeSteps.length} signals_count=${parsedSignals.length}`);
 
     setStatus('generating');
     setError(null);
@@ -472,8 +496,6 @@ export default function Home() {
     setCode('');
     setActiveTab('flow');
     startThinking();
-
-    const parsedSignals = parseSignals();
 
     try {
       const genUrl = apiUrl(API_GENERATE_BASE, '/api/generate');
@@ -526,6 +548,9 @@ export default function Home() {
 
       if (!wfDef) throw new Error('未收到工作流定义');
 
+      const wf = wfDef as WorkflowDefinition;
+      logEvent('INFO', `[UI] 工作流生成成功 name="${wf.name || ''}" steps=${wf.steps?.length ?? 0}`);
+
       setWorkflowDef(wfDef);
       const chart = workflowToFlowChart(wfDef);
       setFlowChart(chart);
@@ -542,12 +567,15 @@ export default function Home() {
       const codeJson = await codeRes.json();
       if (codeJson.success) {
         setCode(codeJson.code);
+        logEvent('INFO', `[UI] TS 代码生成成功 code_len=${codeJson.code.length}`);
         setStreamLog(prev => [...prev, { type: 'progress', text: `✓ 全部完成，代码 ${codeJson.code.length} 字符` }]);
       } else {
+        logEvent('ERROR', `[UI] TS 代码生成失败: ${codeJson.error}`);
         setError(`代码生成失败: ${codeJson.error}`);
       }
     } catch (e) {
       finishThinking();
+      logEvent('ERROR', `[UI] 生成工作流异常: ${String(e)}`);
       setError(String(e));
       setStreamLog(prev => [...prev, { type: 'error', text: String(e) }]);
     } finally {
@@ -633,41 +661,49 @@ export default function Home() {
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    logEvent('INFO', `[UI] 上传数据文件 name="${file.name}" size=${file.size}`);
 
-    const XLSX = await import('xlsx');
-    const arrayBuffer = await file.arrayBuffer();
-    // cellDates: true → 让 xlsx 将日期/时间单元格转为 JS Date 对象
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    try {
+      const XLSX = await import('xlsx');
+      const arrayBuffer = await file.arrayBuffer();
+      // cellDates: true → 让 xlsx 将日期/时间单元格转为 JS Date 对象
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-    if (raw.length < 2) {
-      setError('Excel 文件至少需要 2 行（标题 + 数据）');
-      return;
-    }
+      if (raw.length < 2) {
+        logEvent('WARN', `[UI] Excel 文件行数不足 rows=${raw.length}`);
+        setError('Excel 文件至少需要 2 行（标题 + 数据）');
+        return;
+      }
 
-    const headers = raw[0].map((h: any) => String(h).replace(/[\r\n]+/g, '').trim());
-    const rows = raw.slice(1).map(row =>
-      headers.map((_, i) => {
-        const v = row[i];
-        if (v === undefined || v === null) return 0;
-        // Excel 日期/时间类型 → 可读字符串
-        if (v instanceof Date) {
-          return formatExcelDate(v);
-        }
-        const num = Number(v);
-        return isNaN(num) ? v : num;
-      })
-    );
+      const headers = raw[0].map((h: any) => String(h).replace(/[\r\n]+/g, '').trim());
+      const rows = raw.slice(1).map(row =>
+        headers.map((_, i) => {
+          const v = row[i];
+          if (v === undefined || v === null) return 0;
+          // Excel 日期/时间类型 → 可读字符串
+          if (v instanceof Date) {
+            return formatExcelDate(v);
+          }
+          const num = Number(v);
+          return isNaN(num) ? v : num;
+        })
+      );
 
-    setData({ headers, rows, fileName: file.name });
-    setHeaderOverrides({});
-    setResult(null);
-    setError(null);
-    setActiveTab('data');
+      setData({ headers, rows, fileName: file.name });
+      setHeaderOverrides({});
+      setResult(null);
+      setError(null);
+      setActiveTab('data');
+      logEvent('INFO', `[UI] Excel 解析成功 cols=${headers.length} rows=${rows.length}`);
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      logEvent('ERROR', `[UI] Excel 解析异常 name="${file.name}": ${String(err)}`);
+      setError(`Excel 解析失败: ${String(err)}`);
     }
   }, []);
 
@@ -682,7 +718,9 @@ export default function Home() {
 
   // === 执行代码 ===
   const handleExecute = useCallback(async () => {
+    logEvent('INFO', `[UI] 点击执行 has_data=${!!data} has_code=${!!code.trim()} has_workflow=${!!workflowDef}`);
     if (!data) {
+      logEvent('WARN', '[UI] 执行中断: 未上传数据');
       setError('请先上传数据');
       return;
     }
@@ -699,6 +737,7 @@ export default function Home() {
         if (!codeJson.success) throw new Error(codeJson.error);
         setCode(codeJson.code);
       } catch (e) {
+        logEvent('ERROR', `[UI] 执行前补生成代码失败: ${String(e)}`);
         setError(String(e));
         setStatus('idle');
         return;
@@ -706,6 +745,7 @@ export default function Home() {
     }
 
     if (!code.trim()) {
+      logEvent('WARN', '[UI] 执行中断: 无代码可运行');
       setError('需要先生成工作流');
       return;
     }
@@ -725,7 +765,9 @@ export default function Home() {
 
       setResult(json.result);
       setActiveTab('result');
+      logEvent('INFO', `[UI] 执行成功 rows=${effectiveData?.rows?.length ?? 0}`);
     } catch (e) {
+      logEvent('ERROR', `[UI] 执行失败: ${String(e)}`);
       setError(String(e));
     } finally {
       setStatus('idle');

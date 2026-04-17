@@ -20,9 +20,8 @@
 
 
 // --v2
-export const API_VALIDATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/rds-api-servers/endpoints/Default/invocations';
-export const API_GENERATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/rds-api-servers/endpoints/Default/invocations';
-
+export const API_VALIDATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/asd-api-servers/endpoints/Default/invocations';
+export const API_GENERATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/asd-api-servers/endpoints/Default/invocations';
 
 // export const API_GENERATE_BASE = process.env.NEXT_PUBLIC_API_GENERATE_BASE || 'http://localhost:3010';
 // export const API_GENERATE_BASE = process.env.NEXT_PUBLIC_API_GENERATE_BASE || 'https://5a9438af-8bc8-4fdc-8278-c6a896f14167.dev.coze.site';

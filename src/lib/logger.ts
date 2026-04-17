@@ -1,53 +1,36 @@
 /**
- * 文件日志工具 — 将调试信息写入 logs/ 目录
- * 每次 API 调用生成独立日志文件，方便排查问题
+ * 日志工具 — 输出到 console，由 FaaS 平台统一收集
+ * 保持 LogSession 接口不变，调用方无需修改
  */
-import fs from 'fs';
-import path from 'path';
-
-const LOGS_DIR = path.join(process.cwd(), 'logs');
-
-function ensureLogsDir() {
-  if (!fs.existsSync(LOGS_DIR)) {
-    fs.mkdirSync(LOGS_DIR, { recursive: true });
-  }
-}
-
-function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
 
 export interface LogSession {
   /** 追加一行日志 */
   log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', message: string): void;
-  /** 追加大段内容（如 LLM 完整输出） */
+  /** 追加大段内容（如完整输入/输出） */
   dump(label: string, content: string): void;
-  /** 获取日志文件路径 */
+  /** 会话标识 */
   filePath: string;
 }
 
 /**
- * 创建一个日志会话，所有内容写入同一个文件
- * @param prefix 文件名前缀，如 "generate" / "validate"
+ * 创建一个日志会话，所有内容输出到 console
+ * @param prefix 会话前缀，如 "generate-code"
  */
 export function createLogSession(prefix: string): LogSession {
-  ensureLogsDir();
-  const ts = timestamp();
-  const fileName = `${prefix}_${ts}.log`;
-  const filePath = path.join(LOGS_DIR, fileName);
-
-  // 写入文件头
-  fs.writeFileSync(filePath, `=== ${prefix.toUpperCase()} LOG ===\nTime: ${new Date().toISOString()}\n\n`, 'utf-8');
+  const sessionId = `${prefix}_${Date.now()}`;
+  console.log(`[${prefix}] === LOG SESSION START === ${new Date().toISOString()}`);
 
   return {
-    filePath,
+    filePath: sessionId,
     log(level, message) {
-      const line = `[${new Date().toISOString()}] [${level}] ${message}\n`;
-      fs.appendFileSync(filePath, line, 'utf-8');
+      const line = `[${prefix}] [${level}] ${message}`;
+      if (level === 'ERROR') console.error(line);
+      else if (level === 'WARN') console.warn(line);
+      else console.log(line);
     },
     dump(label, content) {
-      const section = `\n--- ${label} (${content.length} chars) ---\n${content}\n--- END ${label} ---\n\n`;
-      fs.appendFileSync(filePath, section, 'utf-8');
+      console.log(`[${prefix}] --- ${label} (${content.length} chars) ---`);
+      console.log(content);
     },
   };
 }

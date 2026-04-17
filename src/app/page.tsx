@@ -607,13 +607,36 @@ export default function Home() {
 
 
   // === 文件上传 ===
+
+  /** Excel Date/Time 对象 → 可读字符串（使用 UTC 以匹配 xlsx cellDates 输出） */
+  function formatExcelDate(d: Date): string {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const h = pad(d.getUTCHours());
+    const m = pad(d.getUTCMinutes());
+    const s = pad(d.getUTCSeconds());
+    const ms = d.getUTCMilliseconds();
+    const timeStr = ms > 0
+      ? `${h}:${m}:${s}.${ms.toString().padStart(3, '0')}`
+      : `${h}:${m}:${s}`;
+
+    // 时间型单元格：Excel 内部存为 1899-12-30 + 时间偏移
+    if (d.getUTCFullYear() <= 1900) return timeStr;
+
+    // 日期+时间型
+    const y = d.getUTCFullYear();
+    const M = pad(d.getUTCMonth() + 1);
+    const day = pad(d.getUTCDate());
+    return `${y}-${M}-${day} ${timeStr}`;
+  }
+
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const XLSX = await import('xlsx');
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    // cellDates: true → 让 xlsx 将日期/时间单元格转为 JS Date 对象
+    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
@@ -627,6 +650,10 @@ export default function Home() {
       headers.map((_, i) => {
         const v = row[i];
         if (v === undefined || v === null) return 0;
+        // Excel 日期/时间类型 → 可读字符串
+        if (v instanceof Date) {
+          return formatExcelDate(v);
+        }
         const num = Number(v);
         return isNaN(num) ? v : num;
       })

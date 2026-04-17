@@ -15,9 +15,13 @@
 // export const API_VALIDATE_BASE = 'https://p4hhhsphhg.coze.site';
 // export const API_GENERATE_BASE = 'https://p4hhhsphhg.coze.site';
 
-export const API_VALIDATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/agent-code-wTfWu/endpoints/t1/invocations';
-export const API_GENERATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/agent-code-wTfWu/endpoints/t1/invocations';
+// export const API_VALIDATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/agent-code-wTfWu/endpoints/t1/invocations';
+// export const API_GENERATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/agent-code-wTfWu/endpoints/t1/invocations';
 
+
+// --v2
+export const API_VALIDATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/rds-api-servers/endpoints/Default/invocations';
+export const API_GENERATE_BASE = 'https://1941210082115864.agentrun-data.cn-shanghai.aliyuncs.com/agent-runtimes/rds-api-servers/endpoints/Default/invocations';
 
 
 // export const API_GENERATE_BASE = process.env.NEXT_PUBLIC_API_GENERATE_BASE || 'http://localhost:3010';

@@ -5,8 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-
-const SKILLS_DIR = join(process.cwd(), 'skills');
+import { SKILLS_DIR } from '@/lib/data-dir';
 
 export async function GET(
   _request: NextRequest,

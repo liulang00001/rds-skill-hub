@@ -332,7 +332,7 @@ export default function DataPreviewPanel({ data, headerOverrides, onHeaderRename
                       col.warnings.length > 0 ? 'bg-amber-50/30' : ''
                     }`}
                   >
-                    <td className="px-3 py-2 text-[var(--muted)]">{col.index + 1}</td>
+                    <td className="px-3 py-2 text-[var(--muted)]">{col.index}</td>
                     <td className="px-3 py-2">
                       {editingCol === col.index ? (
                         /* 编辑模式 */
@@ -502,7 +502,7 @@ export default function DataPreviewPanel({ data, headerOverrides, onHeaderRename
               <tbody>
                 {sortedRows.map((row, ri) => (
                   <tr key={ri} className="border-t border-[var(--border)] hover:bg-[var(--bg-secondary)] transition">
-                    <td className="px-2 py-1.5 text-[var(--muted)] sticky left-0 bg-[var(--bg-primary)]">{ri + 1}</td>
+                    <td className="px-2 py-1.5 text-[var(--muted)] sticky left-0 bg-[var(--bg-primary)]">{ri}</td>
                     {row.map((cell, ci) => (
                       <td key={ci} className="px-2 py-1.5 whitespace-nowrap max-w-[150px] truncate">
                         {cell === undefined || cell === null || cell === '' ? (

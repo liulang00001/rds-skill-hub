@@ -10,6 +10,7 @@ import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
 import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
+import { getClientContext } from '@/lib/client-context';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
@@ -292,7 +293,7 @@ export default function Home() {
       const { res, logId } = await loggedFetchSSE(sseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps }),
+        body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps, clientContext: getClientContext() }),
       });
 
       let result: ValidationResult | null = null;
@@ -479,7 +480,7 @@ export default function Home() {
       const { res, logId } = await loggedFetchSSE(genUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: analyzeSteps, signals: parsedSignals }),
+        body: JSON.stringify({ description: analyzeSteps, signals: parsedSignals, clientContext: getClientContext() }),
       });
 
       let wfDef: WorkflowDefinition | null = null;

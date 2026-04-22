@@ -82,6 +82,8 @@ export default function Home() {
   const [showSkillSave, setShowSkillSave] = useState(false);
   const [showSkillList, setShowSkillList] = useState(false);
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
+  /** 「我的 Skill」下拉外层容器 — 用于判断点击是否发生在组件外以触发关闭 */
+  const skillListWrapperRef = useRef<HTMLDivElement>(null);
 
   // === 逻辑描述与处理 ===
   const [signalsDef, setSignalsDef] = useState('');
@@ -899,6 +901,30 @@ export default function Home() {
     document.addEventListener('mouseup', onUp);
   }, [jsonPanelWidth]);
 
+  // === 「我的 Skill」下拉：点击外部关闭 ===
+  // 关键：用 setTimeout(0) 把监听挂到下一个 macrotask，让「打开的这次 click」
+  //   的所有事件派发（mousedown/mouseup/click/synthetic）完全跑完再上监听，
+  //   否则 React 19 下 useEffect 可能与事件派发同帧，导致打开的同一拍即刻误关。
+  useEffect(() => {
+    if (!showSkillList) return;
+
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (!skillListWrapperRef.current) return;
+      if (!skillListWrapperRef.current.contains(e.target as Node)) {
+        setShowSkillList(false);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', onDocMouseDown);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', onDocMouseDown);
+    };
+  }, [showSkillList]);
+
   return (
     <div className="h-screen flex flex-col">
       {/* 顶部栏 */}
@@ -975,7 +1001,7 @@ export default function Home() {
         </button>
 
         {/* 我的 Skill */}
-        <div className="relative">
+        <div className="relative" ref={skillListWrapperRef}>
           <button
             onClick={() => { setShowSkillList(!showSkillList); setShowSkillSave(false); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded transition ${
@@ -1187,23 +1213,10 @@ export default function Home() {
               {/* 右：分析步骤 + 校验结果 */}
               <div ref={rightPanelRef} className="flex-1 h-full flex flex-col min-w-0">
                 <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-bold">
-                      分析步骤
-                      <span className="ml-2 text-xs font-normal text-[var(--muted)]">{stepCount} 个步骤</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-[var(--muted)]">扫描模式:</span>
-                      <label className="flex items-center gap-1 text-xs">
-                        <input type="radio" name="scanMode" defaultChecked className="accent-[var(--accent)]" />
-                        按时序扫描
-                      </label>
-                      <label className="flex items-center gap-1 text-xs">
-                        <input type="radio" name="scanMode" className="accent-[var(--accent)]" />
-                        全量扫描
-                      </label>
-                    </div>
-                  </div>
+                  <label className="text-sm font-bold">
+                    分析步骤
+                    <span className="ml-2 text-xs font-normal text-[var(--muted)]">{stepCount} 个步骤</span>
+                  </label>
                   <p className="text-xs text-[var(--muted)] mt-1">定义分析的逻辑流程，包括条件和动作（输入时实时校验）</p>
                 </div>
 

@@ -75,6 +75,9 @@ export default function Home() {
   /** JSON 面板宽度（像素）；支持拖拽调整，localStorage 持久化 */
   const [jsonPanelWidth, setJsonPanelWidth] = useState(480);
 
+  /** 「生成工作流」拦截弹框开关；被拦原因在 gateReason 里现场计算 */
+  const [showGenerateGate, setShowGenerateGate] = useState(false);
+
   // === Skill 管理 ===
   const [savedSkills, setSavedSkills] = useState<SavedSkill[]>([]);
   const [skillSaveName, setSkillSaveName] = useState('');
@@ -286,9 +289,12 @@ export default function Home() {
   }, []);
 
   // === 逻辑校验（SSE 流式） ===
-  const handleValidateLogic = useCallback(async () => {
-    if (!signalsDef.trim() && !analyzeSteps.trim()) return;
-    logEvent('INFO', `[UI] 点击逻辑校验 signals_len=${signalsDef.length} steps_len=${analyzeSteps.length}`);
+  // override.steps：允许调用方直接传入一段 steps（绕过 closure 里可能过期的 analyzeSteps），
+  //   用于「应用优化后逻辑并校验」这种 setAnalyzeSteps 尚未提交、但立即需要发起校验的场景。
+  const handleValidateLogic = useCallback(async (override?: { steps?: string }) => {
+    const effectiveSteps = override?.steps ?? analyzeSteps;
+    if (!signalsDef.trim() && !effectiveSteps.trim()) return;
+    logEvent('INFO', `[UI] 点击逻辑校验 signals_len=${signalsDef.length} steps_len=${effectiveSteps.length}${override?.steps ? ' (override)' : ''}`);
     setValidating(true);
     setValidationResult(null);
     setShowDiff(false);
@@ -300,7 +306,7 @@ export default function Home() {
       const { res, logId } = await loggedFetchSSE(sseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps, clientContext: getClientContext() }),
+        body: JSON.stringify({ signals: signalsDef, steps: effectiveSteps, clientContext: getClientContext() }),
       });
 
       let result: ValidationResult | null = null;
@@ -587,6 +593,49 @@ export default function Home() {
       setStatus('idle');
     }
   }, [analyzeSteps, parseSignals, startThinking, finishThinking, loggedFetch, loggedFetchSSE, appendSSEEvent, finishSSELog]);
+
+  // === 「生成工作流」拦截：校验前置 ===
+  // 把 gate 状态派生自 validationResult，单一数据源；弹框打开时实时反映当前校验状态。
+  // 注意：adaptabilityCheck 不参与 gate —— 它是软建议（优化点）而非硬错误，不应阻塞生成。
+  type GateReason = 'no-validation' | 'signal-failed' | 'logic-failed' | 'both-failed';
+  const gateReason = useMemo<GateReason | null>(() => {
+    if (!validationResult) return 'no-validation';
+    const signalBad = !validationResult.signalCheck.passed;
+    const logicBad = !validationResult.logicCheck.passed;
+    if (signalBad && logicBad) return 'both-failed';
+    if (signalBad) return 'signal-failed';
+    if (logicBad) return 'logic-failed';
+    return null;
+  }, [validationResult]);
+
+  /**
+   * 按钮点击入口：仅在「用户主动点击」路径上做拦截。
+   * handleGenerate 本体保持纯净，供其它路径（如 Skill 加载后自动生成等）直接调用。
+   */
+  const handleGenerateClick = useCallback(() => {
+    if (gateReason !== null) {
+      logEvent('INFO', `[UI] 生成工作流被拦截 reason=${gateReason}`);
+      setShowGenerateGate(true);
+      return;
+    }
+    handleGenerate();
+  }, [gateReason, handleGenerate]);
+
+  /**
+   * 应用 LLM 给出的优化后 steps 并立即重新校验。
+   * 关键：setAnalyzeSteps 是异步（下一帧生效），所以用 override.steps 把新值直接注入
+   *   handleValidateLogic，避免读到 closure 里过期的 analyzeSteps。
+   */
+  const applyOptimizedAndValidate = useCallback(() => {
+    const optimized = validationResult?.optimizedSteps;
+    if (optimized) {
+      setAnalyzeSteps(optimized);
+      handleValidateLogic({ steps: optimized });
+    } else {
+      // LLM 没给优化版本，退化为普通重新校验
+      handleValidateLogic();
+    }
+  }, [validationResult, handleValidateLogic]);
 
   // === JSON 编辑 → 应用更改 ===
   const handleJsonChange = useCallback((value: string | undefined) => {
@@ -1233,17 +1282,17 @@ export default function Home() {
                     />
                     <p className="text-[10px] text-[var(--muted)] mt-2">格式: ## 步骤N: 标题 + 条件/动作列表</p>
 
-                    {/* 实时信号引用检查提示 */}
+                    {/* 实时信号扫描提醒（仅前端启发式扫描，后端会以 LLM 做准确校验；黄色提示而非红色错误） */}
                     {realtimeSignalIssues.length > 0 && (
-                      <div className="mt-2 px-2.5 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-700 flex items-start gap-1.5 shrink-0">
-                        <XCircle size={13} className="shrink-0 mt-0.5 text-red-400" />
+                      <div className="mt-2 px-2.5 py-1.5 bg-yellow-50 border border-yellow-200 rounded text-[11px] text-yellow-800 flex items-start gap-1.5 shrink-0">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5 text-yellow-500" />
                         <div className="flex-1 min-w-0">
-                          <span className="font-medium">未定义的信号引用：</span>
+                          <span className="font-medium">信号实时扫描提醒，检测到未匹配信号，以校验结果为准：</span>
                           <span className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
                             {realtimeSignalIssues.map((issue, i) => (
                               <span key={i}>
-                                <span className="inline-block px-1 py-0.5 rounded bg-red-100 text-red-600 text-[10px] font-mono mr-0.5">L{issue.line}</span>
-                                <span className="font-mono text-red-600">{issue.signal}</span>
+                                <span className="inline-block px-1 py-0.5 rounded bg-yellow-100 text-yellow-700 text-[10px] font-mono mr-0.5">L{issue.line}</span>
+                                <span className="font-mono text-yellow-700">{issue.signal}</span>
                               </span>
                             ))}
                           </span>
@@ -1262,7 +1311,7 @@ export default function Home() {
                         {validating ? '校验中...' : '逻辑校验'}
                       </button>
                       <button
-                        onClick={handleGenerate}
+                        onClick={handleGenerateClick}
                         disabled={!analyzeSteps.trim() || isGenerating || validating}
                         className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm bg-[var(--accent)] text-white rounded-lg hover:opacity-90 transition disabled:opacity-40"
                       >
@@ -1612,6 +1661,123 @@ export default function Home() {
 
       {/* 点赞点踩浮窗（固定右下角，走 /api/logs 通道；tag 由组件内下拉选择） */}
       <FeedbackFab />
+
+      {/* 「生成工作流」拦截弹框：校验未做 / 信号引用 / 逻辑完整性不通过 */}
+      {showGenerateGate && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowGenerateGate(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-[480px] max-w-[92vw] max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 头部 */}
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]">
+              <AlertTriangle size={18} className="text-amber-500 shrink-0" />
+              <h3 className="text-sm font-bold flex-1">
+                {gateReason === 'no-validation' ? '请先进行逻辑校验' : '校验未通过，无法生成工作流'}
+              </h3>
+              <button
+                onClick={() => setShowGenerateGate(false)}
+                className="text-[var(--muted)] hover:text-[var(--fg)] transition"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* 正文 */}
+            <div className="px-5 py-4 overflow-auto flex-1 text-sm">
+              {gateReason === 'no-validation' && (
+                <p className="text-[var(--fg)]">
+                  在生成工作流之前，请先点击&nbsp;
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded text-xs">
+                    <ShieldCheck size={12} /> 逻辑校验
+                  </span>
+                  &nbsp;按钮，让系统检查信号引用与逻辑完整性。
+                </p>
+              )}
+
+              {validationResult && (gateReason === 'signal-failed' || gateReason === 'both-failed') && (
+                <div className="mb-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-red-600 mb-1.5">
+                    <XCircle size={13} />
+                    信号引用检查未通过（{validationResult.signalCheck.issues.length} 项）
+                  </div>
+                  <ul className="ml-5 space-y-1 list-disc text-xs text-[var(--fg)]">
+                    {validationResult.signalCheck.issues.slice(0, 5).map((issue, i) => (
+                      <li key={i}>
+                        <span className="font-mono text-red-500">{issue.signal}</span>：{issue.message}
+                      </li>
+                    ))}
+                    {validationResult.signalCheck.issues.length > 5 && (
+                      <li className="text-[var(--muted)]">
+                        …还有 {validationResult.signalCheck.issues.length - 5} 项
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {validationResult && (gateReason === 'logic-failed' || gateReason === 'both-failed') && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-red-600 mb-1.5">
+                    <XCircle size={13} />
+                    逻辑完整性检查未通过（{validationResult.logicCheck.issues.length} 项）
+                  </div>
+                  <ul className="ml-5 space-y-1 list-disc text-xs text-[var(--fg)]">
+                    {validationResult.logicCheck.issues.slice(0, 5).map((issue, i) => (
+                      <li key={i}>
+                        <span className="font-mono text-red-500">{issue.step}</span>：{issue.message}
+                      </li>
+                    ))}
+                    {validationResult.logicCheck.issues.length > 5 && (
+                      <li className="text-[var(--muted)]">
+                        …还有 {validationResult.logicCheck.issues.length - 5} 项
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* 底部按钮 */}
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-[var(--border)] bg-gray-50">
+              <button
+                onClick={() => setShowGenerateGate(false)}
+                className="px-3 py-1.5 text-xs border border-[var(--border)] rounded hover:bg-white transition"
+              >
+                关闭
+              </button>
+              {gateReason === 'no-validation' ? (
+                <button
+                  onClick={() => {
+                    setShowGenerateGate(false);
+                    handleValidateLogic();
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:opacity-90 transition"
+                >
+                  <ShieldCheck size={12} />
+                  立即校验
+                </button>
+              ) : (
+                // 2/3/4：尽量「应用优化后逻辑并校验」；若 LLM 没给 optimizedSteps 则退化为重新校验
+                <button
+                  onClick={() => {
+                    setShowGenerateGate(false);
+                    applyOptimizedAndValidate();
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:opacity-90 transition"
+                >
+                  <ShieldCheck size={12} />
+                  {validationResult?.optimizedSteps ? '应用优化后逻辑并校验' : '重新校验'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

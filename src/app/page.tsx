@@ -16,6 +16,7 @@ import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
 import RequestLogPanel, { RequestLogEntry } from '@/components/RequestLogPanel';
+import FeedbackFab from '@/components/FeedbackFab';
 
 interface SavedSkill {
   name: string;
@@ -71,6 +72,8 @@ export default function Home() {
   const [jsonText, setJsonText] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonDirty, setJsonDirty] = useState(false);
+  /** JSON 面板宽度（像素）；支持拖拽调整，localStorage 持久化 */
+  const [jsonPanelWidth, setJsonPanelWidth] = useState(480);
 
   // === Skill 管理 ===
   const [savedSkills, setSavedSkills] = useState<SavedSkill[]>([]);
@@ -848,6 +851,54 @@ export default function Home() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
+  // === 可拖拽分割线：左右（流程图 vs JSON 面板） ===
+  // 首次 mount 读取 localStorage（放 useEffect 避免 SSR 水合不一致）
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('rds_json_panel_width');
+      const n = stored ? parseInt(stored, 10) : NaN;
+      if (Number.isFinite(n)) {
+        const maxW = Math.min(window.innerWidth - 320, 1400);
+        setJsonPanelWidth(Math.max(280, Math.min(n, maxW)));
+      }
+    } catch {
+      /* localStorage 被禁用：保持默认 */
+    }
+  }, []);
+
+  const handleJsonHDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = jsonPanelWidth;
+    // 在 closure 内维护最新值，避免 onUp 回调从 state closure 读到旧值
+    let latestWidth = startWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      // 分隔条在 JSON 面板左侧；鼠标向左移动（delta 为负）→ 面板应变宽
+      const delta = ev.clientX - startX;
+      const raw = startWidth - delta;
+      // 下限：保证 monaco 能渲染；上限：给左侧流程图至少 320px 空间
+      const maxW = Math.min(window.innerWidth - 320, 1400);
+      latestWidth = Math.max(280, Math.min(raw, maxW));
+      setJsonPanelWidth(latestWidth);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem('rds_json_panel_width', String(latestWidth));
+      } catch {
+        /* 忽略 */
+      }
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [jsonPanelWidth]);
+
   return (
     <div className="h-screen flex flex-col">
       {/* 顶部栏 */}
@@ -1400,9 +1451,18 @@ export default function Home() {
                 )}
               </div>
 
-              {/* JSON 编辑面板 */}
+              {/* JSON 编辑面板 + 左侧可拖拽分隔条 */}
               {showJsonPanel && (
-                <div className="w-[480px] h-full border-l border-[var(--border)] flex flex-col bg-[var(--bg)] shrink-0">
+                <div
+                  onMouseDown={handleJsonHDragStart}
+                  className="shrink-0 w-1 cursor-col-resize bg-[var(--border)] hover:bg-[var(--accent)] transition-colors"
+                  title="拖动调整 JSON 面板宽度"
+                />
+              )}
+              {showJsonPanel && (
+                <div
+                  style={{ width: jsonPanelWidth }}
+                  className="h-full flex flex-col bg-[var(--bg)] shrink-0">
                   <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
                     <Braces size={14} className="text-[var(--muted)]" />
                     <span className="text-xs font-bold">工作流 JSON</span>
@@ -1536,6 +1596,9 @@ export default function Home() {
           onClose={() => setShowRequestLog(false)}
         />
       )}
+
+      {/* 点赞点踩浮窗（固定右下角，走 /api/logs 通道；tag 由组件内下拉选择） */}
+      <FeedbackFab />
     </div>
   );
 }

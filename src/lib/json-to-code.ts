@@ -143,6 +143,31 @@ function varName(stepId: string): string {
   return stepId.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
+/**
+ * 解析并校验 rowRef 参数（白名单）
+ *
+ * 背景：checkValue / checkMultiValues / switchValue / compareSignals 这些模块
+ * 的第一个参数必须是 SignalRow 对象。LLM 在生成工作流 JSON 时偶尔会把
+ * rowRef 误设为 "idx"（索引号），导致 row[signal] 恒为 undefined，检查永远失败。
+ *
+ * 白名单策略：
+ *   - 允许 "row"（默认，当前作用域的行对象）
+ *   - 允许 "data[...]" 形式的索引访问（覆盖"引用其他行"的合法需求）
+ *   - 其他（"idx"、"i"、"eventNo"、空字符串等）一律回退到 "row" 并打印警告
+ *
+ * 这样即使 LLM 输出脏数据，生成的代码仍然语义正确，最多是"用了当前行而非期望的行"。
+ */
+function resolveRowRef(rowRef: unknown): string {
+  if (typeof rowRef !== 'string') return 'row';
+  const trimmed = rowRef.trim();
+  if (trimmed === '' || trimmed === 'row') return 'row';
+  // 允许 data[任意表达式]，如 data[idx-1]、data[step_1[0]]
+  if (/^data\[[^\]]+\]$/.test(trimmed)) return trimmed;
+  // 非法值：打印警告，回退到 row
+  console.warn(`[json-to-code] 非法 rowRef="${rowRef}" 已忽略，回退到 "row"（rowRef 仅接受 "row" 或 "data[...]"）`);
+  return 'row';
+}
+
 /** 生成结构化步骤日志的 console.log 语句（运行时由 executor 解析归类） */
 function stepLog(ind: string, stepId: string, label: string, module: string, msgExpr: string): string {
   return `${ind}console.log(JSON.stringify({ __step: ${JSON.stringify(stepId)}, label: ${JSON.stringify(label)}, module: ${JSON.stringify(module)}, msg: ${msgExpr} }));`;
@@ -309,7 +334,7 @@ function genCheckValue(step: WorkflowNode, level: number): string[] {
   const lines: string[] = [];
 
   const transformArg = p.transform ? `, ${JSON.stringify(p.transform)}` : '';
-  const rowRef = p.rowRef || 'row';
+  const rowRef = resolveRowRef(p.rowRef);
 
   if (step.branches) {
     lines.push(`${ind}if (checkValue(${rowRef}, ${JSON.stringify(p.signal)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.value)}${transformArg})) {`);
@@ -340,7 +365,7 @@ function genCheckMultiValues(step: WorkflowNode, level: number): string[] {
   const p = step.params;
   const vn = varName(step.id);
   const lines: string[] = [];
-  const rowRef = p.rowRef || 'row';
+  const rowRef = resolveRowRef(p.rowRef);
 
   if (step.branches) {
     lines.push(`${ind}if (checkMultiValues(${rowRef}, ${JSON.stringify(p.conditions)}, ${JSON.stringify(p.logic || 'and')})) {`);
@@ -457,7 +482,7 @@ function genSwitchValue(step: WorkflowNode, level: number): string[] {
   const ind = '  '.repeat(level);
   const p = step.params;
   const lines: string[] = [];
-  const rowRef = p.rowRef || 'row';
+  const rowRef = resolveRowRef(p.rowRef);
 
   lines.push(stepLog(ind, step.id, step.label || '分支', 'switchValue', `\`${p.signal} = \${${rowRef}[${JSON.stringify(p.signal)}]}\``));
 
@@ -587,7 +612,7 @@ function genCompareSignals(step: WorkflowNode, level: number): string[] {
   const ind = '  '.repeat(level);
   const p = step.params;
   const vn = varName(step.id);
-  const rowRef = p.rowRef || 'row';
+  const rowRef = resolveRowRef(p.rowRef);
   const offsetArg = p.offsetB !== undefined ? `, ${p.offsetB}` : '';
   const lines: string[] = [];
   lines.push(`${ind}const ${vn} = compareSignals(${rowRef}, ${JSON.stringify(p.signalA)}, ${JSON.stringify(p.operator)}, ${JSON.stringify(p.signalB)}${offsetArg});`);

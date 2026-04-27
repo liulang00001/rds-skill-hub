@@ -31,14 +31,15 @@ function renderLineWithHighlights(text: string, words: string[]): React.ReactNod
 
   return parts.map((part, i) => {
     if (wordSet.has(part)) {
+      // 黄色高亮：对应前端启发式实时扫描「提醒」语义（区别于整行红色的后端 LLM「错误」）
       return (
         <span
           key={i}
           style={{
-            color: '#dc2626',
-            backgroundColor: 'rgba(254, 202, 202, 0.45)',
+            color: '#a16207',                         // Tailwind yellow-700
+            backgroundColor: 'rgba(254, 243, 199, 0.55)', // Tailwind yellow-100 / 55%
             borderRadius: 2,
-            textDecoration: 'wavy underline #f87171',
+            textDecoration: 'wavy underline #eab308', // Tailwind yellow-500
             textUnderlineOffset: 3,
           }}
         >
@@ -163,7 +164,13 @@ export default function LineNumberedTextarea({
       >
         <div style={{ paddingTop: PADDING, paddingRight: 8, paddingLeft: 8 }}>
           {lines.map((_, i) => {
-            const { hasAny } = lineFlags[i];
+            const { hasLineError, hasWordError, hasAny } = lineFlags[i];
+            // 行号着色语义分级：
+            //   1) hasLineError（后端 LLM 硬错误）→ 红
+            //   2) 仅 hasWordError（前端启发式扫描）→ 黄（不升级为红，保持"提醒"语义）
+            //   3) 否则 → 默认灰
+            const lineNoColor = hasLineError ? '#dc2626' : hasWordError ? '#a16207' : 'var(--muted)';
+            const lineNoBg = hasLineError ? '#fef2f2' : hasWordError ? '#fefce8' : 'transparent';
             return (
               <div
                 key={i}
@@ -172,9 +179,9 @@ export default function LineNumberedTextarea({
                   height: lineHeights[i] || LINE_HEIGHT,
                   lineHeight: `${LINE_HEIGHT}px`,
                   fontSize: 12,
-                  color: hasAny ? '#dc2626' : 'var(--muted)',
+                  color: lineNoColor,
                   fontWeight: hasAny ? 600 : 400,
-                  backgroundColor: hasAny ? '#fef2f2' : 'transparent',
+                  backgroundColor: lineNoBg,
                 }}
               >
                 <span className="ml-auto">{i + 1}</span>

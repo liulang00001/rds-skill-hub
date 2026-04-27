@@ -8,13 +8,16 @@ import { workflowToFlowChart } from '@/lib/json-to-flow';
 import ResultPanel from '@/components/ResultPanel';
 import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
-import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity } from 'lucide-react';
+import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity, History, RotateCcw } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
 import { getClientContext } from '@/lib/client-context';
+import { logEvent } from '@/lib/browser-logger';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
+import SkillHistoryModal from '@/components/SkillHistoryModal';
 import RequestLogPanel, { RequestLogEntry } from '@/components/RequestLogPanel';
+import FeedbackFab from '@/components/FeedbackFab';
 
 interface SavedSkill {
   name: string;
@@ -22,6 +25,7 @@ interface SavedSkill {
   updatedAt: string;
   size: number;
   description: string;
+  version: number;
 }
 
 interface SkillData {
@@ -33,6 +37,13 @@ interface SkillData {
   code: string;
   validationResult?: ValidationResult | null;
   savedAt: string;
+  version: number;
+}
+
+interface SkillHistoryItem {
+  version: number;
+  description: string;
+  createdAt: string;
 }
 
 // 动态加载避免 SSR 问题
@@ -70,6 +81,11 @@ export default function Home() {
   const [jsonText, setJsonText] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonDirty, setJsonDirty] = useState(false);
+  /** JSON 面板宽度（像素）；支持拖拽调整，localStorage 持久化 */
+  const [jsonPanelWidth, setJsonPanelWidth] = useState(480);
+
+  /** 「生成工作流」拦截弹框开关；被拦原因在 gateReason 里现场计算 */
+  const [showGenerateGate, setShowGenerateGate] = useState(false);
 
   // === Skill 管理 ===
   const [savedSkills, setSavedSkills] = useState<SavedSkill[]>([]);
@@ -78,6 +94,11 @@ export default function Home() {
   const [showSkillSave, setShowSkillSave] = useState(false);
   const [showSkillList, setShowSkillList] = useState(false);
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
+  const [activeSkillVersion, setActiveSkillVersion] = useState<number | null>(null);
+  /** 历史版本 Modal：null 代表关闭，string 代表要查看的 skill 名字 */
+  const [historyForSkill, setHistoryForSkill] = useState<string | null>(null);
+  /** 「我的 Skill」下拉外层容器 — 用于判断点击是否发生在组件外以触发关闭 */
+  const skillListWrapperRef = useRef<HTMLDivElement>(null);
 
   // === 逻辑描述与处理 ===
   const [signalsDef, setSignalsDef] = useState('');
@@ -280,8 +301,12 @@ export default function Home() {
   }, []);
 
   // === 逻辑校验（SSE 流式） ===
-  const handleValidateLogic = useCallback(async () => {
-    if (!signalsDef.trim() && !analyzeSteps.trim()) return;
+  // override.steps：允许调用方直接传入一段 steps（绕过 closure 里可能过期的 analyzeSteps），
+  //   用于「应用优化后逻辑并校验」这种 setAnalyzeSteps 尚未提交、但立即需要发起校验的场景。
+  const handleValidateLogic = useCallback(async (override?: { steps?: string }) => {
+    const effectiveSteps = override?.steps ?? analyzeSteps;
+    if (!signalsDef.trim() && !effectiveSteps.trim()) return;
+    logEvent('INFO', `[UI] 点击逻辑校验 signals_len=${signalsDef.length} steps_len=${effectiveSteps.length}${override?.steps ? ' (override)' : ''}`);
     setValidating(true);
     setValidationResult(null);
     setShowDiff(false);
@@ -293,7 +318,7 @@ export default function Home() {
       const { res, logId } = await loggedFetchSSE(sseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signals: signalsDef, steps: analyzeSteps, clientContext: getClientContext() }),
+        body: JSON.stringify({ signals: signalsDef, steps: effectiveSteps, clientContext: getClientContext() }),
       });
 
       let result: ValidationResult | null = null;
@@ -320,12 +345,14 @@ export default function Home() {
             result = msg.result as unknown as ValidationResult;
           } else if (msg.error) {
             setError(msg.error as string);
+            logEvent('ERROR', `[UI] 逻辑校验失败(done携带error): ${msg.error}`);
           }
           appendSSEEvent(logId, 'done', msg);
         },
         onError: (error) => {
           if (!thinkingDone) { thinkingDone = true; finishThinking(); }
           setError(error);
+          logEvent('ERROR', `[UI] 逻辑校验 SSE onError: ${error}`);
           appendSSEEvent(logId, 'error', error);
         },
       });
@@ -334,10 +361,13 @@ export default function Home() {
 
       if (result) {
         setValidationResult(result);
+        const r = result as ValidationResult;
+        logEvent('INFO', `[UI] 逻辑校验完成 signal=${r.signalCheck?.passed} logic=${r.logicCheck?.passed} adapt=${r.adaptabilityCheck?.passed}`);
       }
     } catch (e) {
       finishThinking();
       setError(String(e));
+      logEvent('ERROR', `[UI] 逻辑校验异常: ${String(e)}`);
     } finally {
       setValidating(false);
     }
@@ -383,6 +413,7 @@ export default function Home() {
   // === Skill 保存 ===
   const handleSaveSkill = useCallback(async () => {
     if (!skillSaveName.trim()) return;
+    logEvent('INFO', `[UI] 点击保存 Skill name="${skillSaveName.trim()}" desc_len=${skillSaveDesc.length} has_workflow=${!!workflowDef} code_len=${code.length}`);
     try {
       const res = await loggedFetch('/api/skills', {
         method: 'POST',
@@ -399,26 +430,32 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.success) {
+        logEvent('INFO', `[UI] Skill 保存成功 name="${json.name}" v=${json.version}`);
         setShowSkillSave(false);
         setSkillSaveName('');
         setSkillSaveDesc('');
         setActiveSkillName(json.name);
+        setActiveSkillVersion(json.version || null);
         loadSkillList();
       } else {
+        logEvent('ERROR', `[UI] Skill 保存失败: ${json.error}`);
         setError(json.error);
       }
     } catch (e) {
+      logEvent('ERROR', `[UI] Skill 保存异常: ${String(e)}`);
       setError(String(e));
     }
   }, [skillSaveName, skillSaveDesc, signalsDef, analyzeSteps, workflowDef, code, validationResult, loadSkillList, loggedFetch]);
 
   // === Skill 加载 ===
   const handleLoadSkill = useCallback(async (name: string) => {
+    logEvent('INFO', `[UI] 点击加载 Skill name="${name}"`);
     try {
       const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}`);
       const json = await res.json();
       if (json.success) {
         const skill: SkillData = json.skill;
+        logEvent('INFO', `[UI] Skill 加载成功 name="${name}" has_workflow=${!!skill.workflowDef} code_len=${(skill.code || '').length}`);
         setSignalsDef(skill.signalsDef || '');
         setAnalyzeSteps(skill.analyzeSteps || '');
         if (skill.workflowDef) {
@@ -433,19 +470,23 @@ export default function Home() {
         if (skill.code) setShowCodeTab(true);
         setValidationResult(skill.validationResult || null);
         setActiveSkillName(name);
+        setActiveSkillVersion(skill.version || null);
         setShowSkillList(false);
         setResult(null);
         setActiveTab('logic');
       } else {
+        logEvent('ERROR', `[UI] Skill 加载失败 name="${name}" err=${json.error}`);
         setError(json.error);
       }
     } catch (e) {
+      logEvent('ERROR', `[UI] Skill 加载异常 name="${name}": ${String(e)}`);
       setError(String(e));
     }
   }, [loggedFetch]);
 
   // === Skill 删除 ===
   const handleDeleteSkill = useCallback(async (name: string) => {
+    logEvent('INFO', `[UI] 点击删除 Skill name="${name}"`);
     try {
       const res = await loggedFetch('/api/skills', {
         method: 'DELETE',
@@ -454,15 +495,87 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.success) {
-        if (activeSkillName === name) setActiveSkillName(null);
+        logEvent('INFO', `[UI] Skill 删除成功 name="${name}"`);
+        if (activeSkillName === name) {
+          setActiveSkillName(null);
+          setActiveSkillVersion(null);
+        }
         loadSkillList();
+      } else {
+        logEvent('WARN', `[UI] Skill 删除失败 name="${name}" err=${json.error}`);
       }
-    } catch {}
+    } catch (e) {
+      logEvent('ERROR', `[UI] Skill 删除异常 name="${name}": ${String(e)}`);
+    }
   }, [activeSkillName, loadSkillList, loggedFetch]);
+
+  // === Skill 历史版本：预览 ===
+  const handlePreviewVersion = useCallback(async (name: string, version: number) => {
+    logEvent('INFO', `[UI] 预览历史版本 name="${name}" v=${version}`);
+    try {
+      const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}/versions/${version}`);
+      const json = await res.json();
+      if (json.success) {
+        const skill: SkillData = json.skill;
+        setSignalsDef(skill.signalsDef || '');
+        setAnalyzeSteps(skill.analyzeSteps || '');
+        if (skill.workflowDef) {
+          setWorkflowDef(skill.workflowDef);
+          setFlowChart(workflowToFlowChart(skill.workflowDef));
+        } else {
+          setWorkflowDef(null);
+          setFlowChart(null);
+        }
+        setCode(skill.code || '');
+        if (skill.code) setShowCodeTab(true);
+        setValidationResult(skill.validationResult || null);
+        setActiveSkillName(name);
+        setActiveSkillVersion(version);
+        setResult(null);
+        setActiveTab('logic');
+        setHistoryForSkill(null);
+      } else {
+        logEvent('ERROR', `[UI] 预览历史版本失败: ${json.error}`);
+        setError(json.error);
+      }
+    } catch (e) {
+      logEvent('ERROR', `[UI] 预览历史版本异常: ${String(e)}`);
+      setError(String(e));
+    }
+  }, [loggedFetch]);
+
+  // === Skill 历史版本：恢复（把旧版内容复制为新版本） ===
+  const handleRestoreVersion = useCallback(async (name: string, version: number) => {
+    logEvent('INFO', `[UI] 恢复历史版本 name="${name}" v=${version}`);
+    try {
+      const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        logEvent('INFO', `[UI] 恢复成功 name="${name}" 新版本=v${json.version}`);
+        setActiveSkillVersion(json.version);
+        // 重新加载当前版本到编辑器
+        await handleLoadSkill(name);
+        loadSkillList();
+      } else {
+        logEvent('ERROR', `[UI] 恢复失败: ${json.error}`);
+        setError(json.error);
+      }
+    } catch (e) {
+      logEvent('ERROR', `[UI] 恢复异常: ${String(e)}`);
+      setError(String(e));
+    }
+  }, [loggedFetch, handleLoadSkill, loadSkillList]);
 
   // === 步骤 1: 自然语言 → JSON 工作流定义 → 流程图（SSE 流式） ===
   const handleGenerate = useCallback(async () => {
     if (!analyzeSteps.trim()) return;
+
+    const parsedSignals = parseSignals();
+    logEvent('INFO', `[UI] 点击生成工作流 steps_len=${analyzeSteps.length} signals_count=${parsedSignals.length}`);
 
     setStatus('generating');
     setError(null);
@@ -472,8 +585,6 @@ export default function Home() {
     setCode('');
     setActiveTab('flow');
     startThinking();
-
-    const parsedSignals = parseSignals();
 
     try {
       const genUrl = apiUrl(API_GENERATE_BASE, '/api/generate');
@@ -526,6 +637,9 @@ export default function Home() {
 
       if (!wfDef) throw new Error('未收到工作流定义');
 
+      const wf = wfDef as WorkflowDefinition;
+      logEvent('INFO', `[UI] 工作流生成成功 name="${wf.name || ''}" steps=${wf.steps?.length ?? 0}`);
+
       setWorkflowDef(wfDef);
       const chart = workflowToFlowChart(wfDef);
       setFlowChart(chart);
@@ -542,18 +656,64 @@ export default function Home() {
       const codeJson = await codeRes.json();
       if (codeJson.success) {
         setCode(codeJson.code);
+        logEvent('INFO', `[UI] TS 代码生成成功 code_len=${codeJson.code.length}`);
         setStreamLog(prev => [...prev, { type: 'progress', text: `✓ 全部完成，代码 ${codeJson.code.length} 字符` }]);
       } else {
+        logEvent('ERROR', `[UI] TS 代码生成失败: ${codeJson.error}`);
         setError(`代码生成失败: ${codeJson.error}`);
       }
     } catch (e) {
       finishThinking();
+      logEvent('ERROR', `[UI] 生成工作流异常: ${String(e)}`);
       setError(String(e));
       setStreamLog(prev => [...prev, { type: 'error', text: String(e) }]);
     } finally {
       setStatus('idle');
     }
   }, [analyzeSteps, parseSignals, startThinking, finishThinking, loggedFetch, loggedFetchSSE, appendSSEEvent, finishSSELog]);
+
+  // === 「生成工作流」拦截：校验前置 ===
+  // 把 gate 状态派生自 validationResult，单一数据源；弹框打开时实时反映当前校验状态。
+  // 注意：adaptabilityCheck 不参与 gate —— 它是软建议（优化点）而非硬错误，不应阻塞生成。
+  type GateReason = 'no-validation' | 'signal-failed' | 'logic-failed' | 'both-failed';
+  const gateReason = useMemo<GateReason | null>(() => {
+    if (!validationResult) return 'no-validation';
+    const signalBad = !validationResult.signalCheck.passed;
+    const logicBad = !validationResult.logicCheck.passed;
+    if (signalBad && logicBad) return 'both-failed';
+    if (signalBad) return 'signal-failed';
+    if (logicBad) return 'logic-failed';
+    return null;
+  }, [validationResult]);
+
+  /**
+   * 按钮点击入口：仅在「用户主动点击」路径上做拦截。
+   * handleGenerate 本体保持纯净，供其它路径（如 Skill 加载后自动生成等）直接调用。
+   */
+  const handleGenerateClick = useCallback(() => {
+    if (gateReason !== null) {
+      logEvent('INFO', `[UI] 生成工作流被拦截 reason=${gateReason}`);
+      setShowGenerateGate(true);
+      return;
+    }
+    handleGenerate();
+  }, [gateReason, handleGenerate]);
+
+  /**
+   * 应用 LLM 给出的优化后 steps 并立即重新校验。
+   * 关键：setAnalyzeSteps 是异步（下一帧生效），所以用 override.steps 把新值直接注入
+   *   handleValidateLogic，避免读到 closure 里过期的 analyzeSteps。
+   */
+  const applyOptimizedAndValidate = useCallback(() => {
+    const optimized = validationResult?.optimizedSteps;
+    if (optimized) {
+      setAnalyzeSteps(optimized);
+      handleValidateLogic({ steps: optimized });
+    } else {
+      // LLM 没给优化版本，退化为普通重新校验
+      handleValidateLogic();
+    }
+  }, [validationResult, handleValidateLogic]);
 
   // === JSON 编辑 → 应用更改 ===
   const handleJsonChange = useCallback((value: string | undefined) => {
@@ -633,41 +793,49 @@ export default function Home() {
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    logEvent('INFO', `[UI] 上传数据文件 name="${file.name}" size=${file.size}`);
 
-    const XLSX = await import('xlsx');
-    const arrayBuffer = await file.arrayBuffer();
-    // cellDates: true → 让 xlsx 将日期/时间单元格转为 JS Date 对象
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    try {
+      const XLSX = await import('xlsx');
+      const arrayBuffer = await file.arrayBuffer();
+      // cellDates: true → 让 xlsx 将日期/时间单元格转为 JS Date 对象
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-    if (raw.length < 2) {
-      setError('Excel 文件至少需要 2 行（标题 + 数据）');
-      return;
-    }
+      if (raw.length < 2) {
+        logEvent('WARN', `[UI] Excel 文件行数不足 rows=${raw.length}`);
+        setError('Excel 文件至少需要 2 行（标题 + 数据）');
+        return;
+      }
 
-    const headers = raw[0].map((h: any) => String(h).replace(/[\r\n]+/g, '').trim());
-    const rows = raw.slice(1).map(row =>
-      headers.map((_, i) => {
-        const v = row[i];
-        if (v === undefined || v === null) return 0;
-        // Excel 日期/时间类型 → 可读字符串
-        if (v instanceof Date) {
-          return formatExcelDate(v);
-        }
-        const num = Number(v);
-        return isNaN(num) ? v : num;
-      })
-    );
+      const headers = raw[0].map((h: any) => String(h).replace(/[\r\n]+/g, '').trim());
+      const rows = raw.slice(1).map(row =>
+        headers.map((_, i) => {
+          const v = row[i];
+          if (v === undefined || v === null) return 0;
+          // Excel 日期/时间类型 → 可读字符串
+          if (v instanceof Date) {
+            return formatExcelDate(v);
+          }
+          const num = Number(v);
+          return isNaN(num) ? v : num;
+        })
+      );
 
-    setData({ headers, rows, fileName: file.name });
-    setHeaderOverrides({});
-    setResult(null);
-    setError(null);
-    setActiveTab('data');
+      setData({ headers, rows, fileName: file.name });
+      setHeaderOverrides({});
+      setResult(null);
+      setError(null);
+      setActiveTab('data');
+      logEvent('INFO', `[UI] Excel 解析成功 cols=${headers.length} rows=${rows.length}`);
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      logEvent('ERROR', `[UI] Excel 解析异常 name="${file.name}": ${String(err)}`);
+      setError(`Excel 解析失败: ${String(err)}`);
     }
   }, []);
 
@@ -682,7 +850,9 @@ export default function Home() {
 
   // === 执行代码 ===
   const handleExecute = useCallback(async () => {
+    logEvent('INFO', `[UI] 点击执行 has_data=${!!data} has_code=${!!code.trim()} has_workflow=${!!workflowDef}`);
     if (!data) {
+      logEvent('WARN', '[UI] 执行中断: 未上传数据');
       setError('请先上传数据');
       return;
     }
@@ -699,6 +869,7 @@ export default function Home() {
         if (!codeJson.success) throw new Error(codeJson.error);
         setCode(codeJson.code);
       } catch (e) {
+        logEvent('ERROR', `[UI] 执行前补生成代码失败: ${String(e)}`);
         setError(String(e));
         setStatus('idle');
         return;
@@ -706,6 +877,7 @@ export default function Home() {
     }
 
     if (!code.trim()) {
+      logEvent('WARN', '[UI] 执行中断: 无代码可运行');
       setError('需要先生成工作流');
       return;
     }
@@ -725,7 +897,9 @@ export default function Home() {
 
       setResult(json.result);
       setActiveTab('result');
+      logEvent('INFO', `[UI] 执行成功 rows=${effectiveData?.rows?.length ?? 0}`);
     } catch (e) {
+      logEvent('ERROR', `[UI] 执行失败: ${String(e)}`);
       setError(String(e));
     } finally {
       setStatus('idle');
@@ -806,6 +980,78 @@ export default function Home() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
+  // === 可拖拽分割线：左右（流程图 vs JSON 面板） ===
+  // 首次 mount 读取 localStorage（放 useEffect 避免 SSR 水合不一致）
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('rds_json_panel_width');
+      const n = stored ? parseInt(stored, 10) : NaN;
+      if (Number.isFinite(n)) {
+        const maxW = Math.min(window.innerWidth - 320, 1400);
+        setJsonPanelWidth(Math.max(280, Math.min(n, maxW)));
+      }
+    } catch {
+      /* localStorage 被禁用：保持默认 */
+    }
+  }, []);
+
+  const handleJsonHDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = jsonPanelWidth;
+    // 在 closure 内维护最新值，避免 onUp 回调从 state closure 读到旧值
+    let latestWidth = startWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      // 分隔条在 JSON 面板左侧；鼠标向左移动（delta 为负）→ 面板应变宽
+      const delta = ev.clientX - startX;
+      const raw = startWidth - delta;
+      // 下限：保证 monaco 能渲染；上限：给左侧流程图至少 320px 空间
+      const maxW = Math.min(window.innerWidth - 320, 1400);
+      latestWidth = Math.max(280, Math.min(raw, maxW));
+      setJsonPanelWidth(latestWidth);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem('rds_json_panel_width', String(latestWidth));
+      } catch {
+        /* 忽略 */
+      }
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [jsonPanelWidth]);
+
+  // === 「我的 Skill」下拉：点击外部关闭 ===
+  // 关键：用 setTimeout(0) 把监听挂到下一个 macrotask，让「打开的这次 click」
+  //   的所有事件派发（mousedown/mouseup/click/synthetic）完全跑完再上监听，
+  //   否则 React 19 下 useEffect 可能与事件派发同帧，导致打开的同一拍即刻误关。
+  useEffect(() => {
+    if (!showSkillList) return;
+
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (!skillListWrapperRef.current) return;
+      if (!skillListWrapperRef.current.contains(e.target as Node)) {
+        setShowSkillList(false);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', onDocMouseDown);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', onDocMouseDown);
+    };
+  }, [showSkillList]);
+
   return (
     <div className="h-screen flex flex-col">
       {/* 顶部栏 */}
@@ -882,7 +1128,7 @@ export default function Home() {
         </button>
 
         {/* 我的 Skill */}
-        <div className="relative">
+        <div className="relative" ref={skillListWrapperRef}>
           <button
             onClick={() => { setShowSkillList(!showSkillList); setShowSkillSave(false); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded transition ${
@@ -893,6 +1139,11 @@ export default function Home() {
           >
             <BookMarked size={14} />
             我的 Skill
+            {activeSkillName && activeSkillVersion != null && (
+              <span className="px-1 py-0.5 text-[9px] leading-none font-mono rounded bg-white border border-[var(--accent)]/30">
+                v{activeSkillVersion}
+              </span>
+            )}
             <ChevronDown size={12} />
           </button>
 
@@ -916,12 +1167,27 @@ export default function Home() {
                     >
                       <BookMarked size={12} className="text-[var(--muted)] shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{s.name}</div>
+                        <div className="font-medium truncate flex items-center gap-1.5">
+                          <span className="truncate">{s.name}</span>
+                          <span
+                            className="shrink-0 px-1.5 py-0.5 text-[9px] leading-none font-mono rounded bg-[var(--accent-light)] text-[var(--accent)] border border-[var(--accent)]/20"
+                            title={`当前版本 v${s.version}`}
+                          >
+                            v{s.version}
+                          </span>
+                        </div>
                         {s.description && <div className="text-[var(--muted)] text-[10px] truncate">{s.description}</div>}
                         <div className="text-[var(--muted)] text-[10px]">
                           {new Date(s.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); setHistoryForSkill(s.name); setShowSkillList(false); }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-[var(--muted)] hover:text-[var(--accent)] transition"
+                        title="查看历史版本"
+                      >
+                        <History size={12} />
+                      </button>
                       <button
                         onClick={e => { e.stopPropagation(); handleDeleteSkill(s.name); }}
                         className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 transition"
@@ -1094,23 +1360,10 @@ export default function Home() {
               {/* 右：分析步骤 + 校验结果 */}
               <div ref={rightPanelRef} className="flex-1 h-full flex flex-col min-w-0">
                 <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-bold">
-                      分析步骤
-                      <span className="ml-2 text-xs font-normal text-[var(--muted)]">{stepCount} 个步骤</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-[var(--muted)]">扫描模式:</span>
-                      <label className="flex items-center gap-1 text-xs">
-                        <input type="radio" name="scanMode" defaultChecked className="accent-[var(--accent)]" />
-                        按时序扫描
-                      </label>
-                      <label className="flex items-center gap-1 text-xs">
-                        <input type="radio" name="scanMode" className="accent-[var(--accent)]" />
-                        全量扫描
-                      </label>
-                    </div>
-                  </div>
+                  <label className="text-sm font-bold">
+                    分析步骤
+                    <span className="ml-2 text-xs font-normal text-[var(--muted)]">{stepCount} 个步骤</span>
+                  </label>
                   <p className="text-xs text-[var(--muted)] mt-1">定义分析的逻辑流程，包括条件和动作（输入时实时校验）</p>
                 </div>
 
@@ -1127,17 +1380,17 @@ export default function Home() {
                     />
                     <p className="text-[10px] text-[var(--muted)] mt-2">格式: ## 步骤N: 标题 + 条件/动作列表</p>
 
-                    {/* 实时信号引用检查提示 */}
+                    {/* 实时信号扫描提醒（仅前端启发式扫描，后端会以 LLM 做准确校验；黄色提示而非红色错误） */}
                     {realtimeSignalIssues.length > 0 && (
-                      <div className="mt-2 px-2.5 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-700 flex items-start gap-1.5 shrink-0">
-                        <XCircle size={13} className="shrink-0 mt-0.5 text-red-400" />
+                      <div className="mt-2 px-2.5 py-1.5 bg-yellow-50 border border-yellow-200 rounded text-[11px] text-yellow-800 flex items-start gap-1.5 shrink-0">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5 text-yellow-500" />
                         <div className="flex-1 min-w-0">
-                          <span className="font-medium">未定义的信号引用：</span>
+                          <span className="font-medium">信号实时扫描提醒，检测到未匹配信号，以校验结果为准：</span>
                           <span className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
                             {realtimeSignalIssues.map((issue, i) => (
                               <span key={i}>
-                                <span className="inline-block px-1 py-0.5 rounded bg-red-100 text-red-600 text-[10px] font-mono mr-0.5">L{issue.line}</span>
-                                <span className="font-mono text-red-600">{issue.signal}</span>
+                                <span className="inline-block px-1 py-0.5 rounded bg-yellow-100 text-yellow-700 text-[10px] font-mono mr-0.5">L{issue.line}</span>
+                                <span className="font-mono text-yellow-700">{issue.signal}</span>
                               </span>
                             ))}
                           </span>
@@ -1156,7 +1409,7 @@ export default function Home() {
                         {validating ? '校验中...' : '逻辑校验'}
                       </button>
                       <button
-                        onClick={handleGenerate}
+                        onClick={handleGenerateClick}
                         disabled={!analyzeSteps.trim() || isGenerating || validating}
                         className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm bg-[var(--accent)] text-white rounded-lg hover:opacity-90 transition disabled:opacity-40"
                       >
@@ -1358,9 +1611,18 @@ export default function Home() {
                 )}
               </div>
 
-              {/* JSON 编辑面板 */}
+              {/* JSON 编辑面板 + 左侧可拖拽分隔条 */}
               {showJsonPanel && (
-                <div className="w-[480px] h-full border-l border-[var(--border)] flex flex-col bg-[var(--bg)] shrink-0">
+                <div
+                  onMouseDown={handleJsonHDragStart}
+                  className="shrink-0 w-1 cursor-col-resize bg-[var(--border)] hover:bg-[var(--accent)] transition-colors"
+                  title="拖动调整 JSON 面板宽度"
+                />
+              )}
+              {showJsonPanel && (
+                <div
+                  style={{ width: jsonPanelWidth }}
+                  className="h-full flex flex-col bg-[var(--bg)] shrink-0">
                   <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
                     <Braces size={14} className="text-[var(--muted)]" />
                     <span className="text-xs font-bold">工作流 JSON</span>
@@ -1493,6 +1755,135 @@ export default function Home() {
           onClear={() => setRequestLogs([])}
           onClose={() => setShowRequestLog(false)}
         />
+      )}
+
+      {/* 点赞点踩浮窗（固定右下角，走 /api/logs 通道；tag 由组件内下拉选择） */}
+      <FeedbackFab />
+
+      {/* Skill 历史版本查看（仅当前 Skill 匹配时显示） */}
+      <SkillHistoryModal
+        skillName={historyForSkill}
+        currentVersion={historyForSkill === activeSkillName ? activeSkillVersion : null}
+        onClose={() => setHistoryForSkill(null)}
+        onPreview={handlePreviewVersion}
+        onRestore={handleRestoreVersion}
+      />
+
+      {/* 「生成工作流」拦截弹框：校验未做 / 信号引用 / 逻辑完整性不通过 */}
+      {showGenerateGate && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowGenerateGate(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-[480px] max-w-[92vw] max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 头部 */}
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]">
+              <AlertTriangle size={18} className="text-amber-500 shrink-0" />
+              <h3 className="text-sm font-bold flex-1">
+                {gateReason === 'no-validation' ? '请先进行逻辑校验' : '校验未通过，无法生成工作流'}
+              </h3>
+              <button
+                onClick={() => setShowGenerateGate(false)}
+                className="text-[var(--muted)] hover:text-[var(--fg)] transition"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* 正文 */}
+            <div className="px-5 py-4 overflow-auto flex-1 text-sm">
+              {gateReason === 'no-validation' && (
+                <p className="text-[var(--fg)]">
+                  在生成工作流之前，请先点击&nbsp;
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded text-xs">
+                    <ShieldCheck size={12} /> 逻辑校验
+                  </span>
+                  &nbsp;按钮，让系统检查信号引用与逻辑完整性。
+                </p>
+              )}
+
+              {validationResult && (gateReason === 'signal-failed' || gateReason === 'both-failed') && (
+                <div className="mb-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-red-600 mb-1.5">
+                    <XCircle size={13} />
+                    信号引用检查未通过（{validationResult.signalCheck.issues.length} 项）
+                  </div>
+                  <ul className="ml-5 space-y-1 list-disc text-xs text-[var(--fg)]">
+                    {validationResult.signalCheck.issues.slice(0, 5).map((issue, i) => (
+                      <li key={i}>
+                        <span className="font-mono text-red-500">{issue.signal}</span>：{issue.message}
+                      </li>
+                    ))}
+                    {validationResult.signalCheck.issues.length > 5 && (
+                      <li className="text-[var(--muted)]">
+                        …还有 {validationResult.signalCheck.issues.length - 5} 项
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {validationResult && (gateReason === 'logic-failed' || gateReason === 'both-failed') && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-red-600 mb-1.5">
+                    <XCircle size={13} />
+                    逻辑完整性检查未通过（{validationResult.logicCheck.issues.length} 项）
+                  </div>
+                  <ul className="ml-5 space-y-1 list-disc text-xs text-[var(--fg)]">
+                    {validationResult.logicCheck.issues.slice(0, 5).map((issue, i) => (
+                      <li key={i}>
+                        <span className="font-mono text-red-500">{issue.step}</span>：{issue.message}
+                      </li>
+                    ))}
+                    {validationResult.logicCheck.issues.length > 5 && (
+                      <li className="text-[var(--muted)]">
+                        …还有 {validationResult.logicCheck.issues.length - 5} 项
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* 底部按钮 */}
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-[var(--border)] bg-gray-50">
+              <button
+                onClick={() => setShowGenerateGate(false)}
+                className="px-3 py-1.5 text-xs border border-[var(--border)] rounded hover:bg-white transition"
+              >
+                关闭
+              </button>
+              {gateReason === 'no-validation' ? (
+                <button
+                  onClick={() => {
+                    setShowGenerateGate(false);
+                    handleValidateLogic();
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:opacity-90 transition"
+                >
+                  <ShieldCheck size={12} />
+                  立即校验
+                </button>
+              ) : (
+                // 2/3/4：尽量「应用优化后逻辑并校验」；若 LLM 没给 optimizedSteps 则退化为重新校验
+                <button
+                  onClick={() => {
+                    setShowGenerateGate(false);
+                    applyOptimizedAndValidate();
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:opacity-90 transition"
+                >
+                  <ShieldCheck size={12} />
+                  {validationResult?.optimizedSteps ? '应用优化后逻辑并校验' : '重新校验'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -8,13 +8,14 @@ import { workflowToFlowChart } from '@/lib/json-to-flow';
 import ResultPanel from '@/components/ResultPanel';
 import LineNumberedTextarea from '@/components/LineNumberedTextarea';
 import DataPreviewPanel, { formatHeader } from '@/components/DataPreviewPanel';
-import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity } from 'lucide-react';
+import { FileUp, Play, Sparkles, Code2, GitBranch, Terminal, Save, Trash2, Table2, Braces, Check, X, ClipboardList, ShieldCheck, AlertTriangle, CheckCircle2, Info, XCircle, BookMarked, ChevronDown, Diff, Activity, History, RotateCcw } from 'lucide-react';
 import { API_VALIDATE_BASE, API_GENERATE_BASE, apiUrl } from '@/lib/api-config';
 import { getClientContext } from '@/lib/client-context';
 import { logEvent } from '@/lib/browser-logger';
 import { parseSSEStream } from '@/lib/sse-parser';
 import ThinkingDrawer from '@/components/ThinkingDrawer';
 import DiffModal from '@/components/DiffModal';
+import SkillHistoryModal from '@/components/SkillHistoryModal';
 import RequestLogPanel, { RequestLogEntry } from '@/components/RequestLogPanel';
 import FeedbackFab from '@/components/FeedbackFab';
 
@@ -24,6 +25,7 @@ interface SavedSkill {
   updatedAt: string;
   size: number;
   description: string;
+  version: number;
 }
 
 interface SkillData {
@@ -35,6 +37,13 @@ interface SkillData {
   code: string;
   validationResult?: ValidationResult | null;
   savedAt: string;
+  version: number;
+}
+
+interface SkillHistoryItem {
+  version: number;
+  description: string;
+  createdAt: string;
 }
 
 // 动态加载避免 SSR 问题
@@ -85,6 +94,9 @@ export default function Home() {
   const [showSkillSave, setShowSkillSave] = useState(false);
   const [showSkillList, setShowSkillList] = useState(false);
   const [activeSkillName, setActiveSkillName] = useState<string | null>(null);
+  const [activeSkillVersion, setActiveSkillVersion] = useState<number | null>(null);
+  /** 历史版本 Modal：null 代表关闭，string 代表要查看的 skill 名字 */
+  const [historyForSkill, setHistoryForSkill] = useState<string | null>(null);
   /** 「我的 Skill」下拉外层容器 — 用于判断点击是否发生在组件外以触发关闭 */
   const skillListWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -418,11 +430,12 @@ export default function Home() {
       });
       const json = await res.json();
       if (json.success) {
-        logEvent('INFO', `[UI] Skill 保存成功 name="${json.name}"`);
+        logEvent('INFO', `[UI] Skill 保存成功 name="${json.name}" v=${json.version}`);
         setShowSkillSave(false);
         setSkillSaveName('');
         setSkillSaveDesc('');
         setActiveSkillName(json.name);
+        setActiveSkillVersion(json.version || null);
         loadSkillList();
       } else {
         logEvent('ERROR', `[UI] Skill 保存失败: ${json.error}`);
@@ -457,6 +470,7 @@ export default function Home() {
         if (skill.code) setShowCodeTab(true);
         setValidationResult(skill.validationResult || null);
         setActiveSkillName(name);
+        setActiveSkillVersion(skill.version || null);
         setShowSkillList(false);
         setResult(null);
         setActiveTab('logic');
@@ -482,7 +496,10 @@ export default function Home() {
       const json = await res.json();
       if (json.success) {
         logEvent('INFO', `[UI] Skill 删除成功 name="${name}"`);
-        if (activeSkillName === name) setActiveSkillName(null);
+        if (activeSkillName === name) {
+          setActiveSkillName(null);
+          setActiveSkillVersion(null);
+        }
         loadSkillList();
       } else {
         logEvent('WARN', `[UI] Skill 删除失败 name="${name}" err=${json.error}`);
@@ -491,6 +508,67 @@ export default function Home() {
       logEvent('ERROR', `[UI] Skill 删除异常 name="${name}": ${String(e)}`);
     }
   }, [activeSkillName, loadSkillList, loggedFetch]);
+
+  // === Skill 历史版本：预览 ===
+  const handlePreviewVersion = useCallback(async (name: string, version: number) => {
+    logEvent('INFO', `[UI] 预览历史版本 name="${name}" v=${version}`);
+    try {
+      const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}/versions/${version}`);
+      const json = await res.json();
+      if (json.success) {
+        const skill: SkillData = json.skill;
+        setSignalsDef(skill.signalsDef || '');
+        setAnalyzeSteps(skill.analyzeSteps || '');
+        if (skill.workflowDef) {
+          setWorkflowDef(skill.workflowDef);
+          setFlowChart(workflowToFlowChart(skill.workflowDef));
+        } else {
+          setWorkflowDef(null);
+          setFlowChart(null);
+        }
+        setCode(skill.code || '');
+        if (skill.code) setShowCodeTab(true);
+        setValidationResult(skill.validationResult || null);
+        setActiveSkillName(name);
+        setActiveSkillVersion(version);
+        setResult(null);
+        setActiveTab('logic');
+        setHistoryForSkill(null);
+      } else {
+        logEvent('ERROR', `[UI] 预览历史版本失败: ${json.error}`);
+        setError(json.error);
+      }
+    } catch (e) {
+      logEvent('ERROR', `[UI] 预览历史版本异常: ${String(e)}`);
+      setError(String(e));
+    }
+  }, [loggedFetch]);
+
+  // === Skill 历史版本：恢复（把旧版内容复制为新版本） ===
+  const handleRestoreVersion = useCallback(async (name: string, version: number) => {
+    logEvent('INFO', `[UI] 恢复历史版本 name="${name}" v=${version}`);
+    try {
+      const res = await loggedFetch(`/api/skills/${encodeURIComponent(name)}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        logEvent('INFO', `[UI] 恢复成功 name="${name}" 新版本=v${json.version}`);
+        setActiveSkillVersion(json.version);
+        // 重新加载当前版本到编辑器
+        await handleLoadSkill(name);
+        loadSkillList();
+      } else {
+        logEvent('ERROR', `[UI] 恢复失败: ${json.error}`);
+        setError(json.error);
+      }
+    } catch (e) {
+      logEvent('ERROR', `[UI] 恢复异常: ${String(e)}`);
+      setError(String(e));
+    }
+  }, [loggedFetch, handleLoadSkill, loadSkillList]);
 
   // === 步骤 1: 自然语言 → JSON 工作流定义 → 流程图（SSE 流式） ===
   const handleGenerate = useCallback(async () => {
@@ -1061,6 +1139,11 @@ export default function Home() {
           >
             <BookMarked size={14} />
             我的 Skill
+            {activeSkillName && activeSkillVersion != null && (
+              <span className="px-1 py-0.5 text-[9px] leading-none font-mono rounded bg-white border border-[var(--accent)]/30">
+                v{activeSkillVersion}
+              </span>
+            )}
             <ChevronDown size={12} />
           </button>
 
@@ -1084,12 +1167,27 @@ export default function Home() {
                     >
                       <BookMarked size={12} className="text-[var(--muted)] shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{s.name}</div>
+                        <div className="font-medium truncate flex items-center gap-1.5">
+                          <span className="truncate">{s.name}</span>
+                          <span
+                            className="shrink-0 px-1.5 py-0.5 text-[9px] leading-none font-mono rounded bg-[var(--accent-light)] text-[var(--accent)] border border-[var(--accent)]/20"
+                            title={`当前版本 v${s.version}`}
+                          >
+                            v{s.version}
+                          </span>
+                        </div>
                         {s.description && <div className="text-[var(--muted)] text-[10px] truncate">{s.description}</div>}
                         <div className="text-[var(--muted)] text-[10px]">
                           {new Date(s.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); setHistoryForSkill(s.name); setShowSkillList(false); }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-[var(--muted)] hover:text-[var(--accent)] transition"
+                        title="查看历史版本"
+                      >
+                        <History size={12} />
+                      </button>
                       <button
                         onClick={e => { e.stopPropagation(); handleDeleteSkill(s.name); }}
                         className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 transition"
@@ -1661,6 +1759,15 @@ export default function Home() {
 
       {/* 点赞点踩浮窗（固定右下角，走 /api/logs 通道；tag 由组件内下拉选择） */}
       <FeedbackFab />
+
+      {/* Skill 历史版本查看（仅当前 Skill 匹配时显示） */}
+      <SkillHistoryModal
+        skillName={historyForSkill}
+        currentVersion={historyForSkill === activeSkillName ? activeSkillVersion : null}
+        onClose={() => setHistoryForSkill(null)}
+        onPreview={handlePreviewVersion}
+        onRestore={handleRestoreVersion}
+      />
 
       {/* 「生成工作流」拦截弹框：校验未做 / 信号引用 / 逻辑完整性不通过 */}
       {showGenerateGate && (
